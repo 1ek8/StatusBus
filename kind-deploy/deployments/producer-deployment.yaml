@@ -17,7 +17,7 @@ spec:
       containers:
       - name: producer
         image: 1ek8/statusbus-producer:latest
-        imagePullPolicy: Always
+        imagePullPolicy: IfNotPresent
         env:
         - name: REDIS_URL
           valueFrom:

@@ -22,7 +22,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.migrate
-    command: ["bunx", "prisma", "migrate", "deploy", "--schema=./packages/store/prisma/schema.prisma"]
+    command: ["bunx", "prisma", "migrate", "deploy", "--config=./packages/store/prisma.config.ts"]
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/statusbus
     depends_on:

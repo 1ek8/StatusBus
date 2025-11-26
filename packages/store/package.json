@@ -13,7 +13,7 @@
     "typescript": "^5"
   },
   "dependencies": {
-    "@prisma/client": "^6.12.0",
-    "prisma": "^6.12.0"
+    "@prisma/client": "^7.0.1",
+    "prisma": "^7.0.1"
   }
 }

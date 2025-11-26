@@ -20,12 +20,13 @@ COPY packages/typescript-config/package.json ./packages/typescript-config/
 # needed for prisma
 RUN apt-get update -y && apt-get install -y openssl
 
-RUN bunx prisma generate --schema=packages/store/prisma/schema.prisma
+COPY apps/api/.env .env
 
 RUN bun install --frozen-lockfile --production
+RUN bunx prisma generate --config=./packages/store/prisma.config.ts
 
 COPY turbo.json .
-RUN bun run build --filter api
+RUN cd apps/api && bun run build
 
 FROM builder AS runner
 
