@@ -1,6 +1,6 @@
 import express from "express";
 import jwt from "jsonwebtoken";
-import { prismaClient } from "store/client";
+import { prisma }  from "store/client";
 import { AuthInput } from "./types";
 import { authMiddleWare } from "./middleware";
 import cors from "cors";
@@ -24,7 +24,7 @@ app.post("/user/signup", async (req, res) => {
         return;
     }
     try {
-        let user = await prismaClient.user.create({
+        let user = await prisma.user.create({
             data: {
                 username: user_data.data.username,
                 password: user_data.data.password
@@ -46,7 +46,7 @@ app.post("/user/signin", async (req, res) => {
         return;
     }
     try {
-        let user = await prismaClient.user.findFirst({
+        let user = await prisma.user.findFirst({
             where: {
                 username: user_data.data.username,
                 password: user_data.data.password
@@ -68,7 +68,7 @@ app.post("/website", authMiddleWare, async (req, res) => {
     if(!req.body.url) {
         return res.status(411).json({});
     }
-    const website = await prismaClient.website.create({
+    const website = await prisma.website.create({
         data: {
             url: req.body.url,
             user_id: req.user_id,
@@ -80,7 +80,7 @@ app.post("/website", authMiddleWare, async (req, res) => {
 });
 
 app.get("/status/:websiteId", authMiddleWare, async (req, res) => {
-    const website = await prismaClient.website.findFirst({
+    const website = await prisma.website.findFirst({
         where: {
             user_id: req.user_id,
             id: req.params.websiteId
@@ -108,7 +108,7 @@ app.get("/status/:websiteId", authMiddleWare, async (req, res) => {
 });
 
 app.get("/websites", authMiddleWare, async (req, res) =>{
-    const websites = await prismaClient.website.findMany({
+    const websites = await prisma.website.findMany({
     where: { user_id: req.user_id },
     include: {
         ticks: {
@@ -134,7 +134,7 @@ app.get("/websites", authMiddleWare, async (req, res) =>{
 
 app.get("/monitoring/websites", async (req, res) => {
   try {
-    const websites = await prismaClient.website.findMany({
+    const websites = await prisma.website.findMany({
       select: {
         id: true,
         url: true,
@@ -153,7 +153,7 @@ app.post("/monitoring/tick", async (req, res) => {
     return res.status(400).json({ error: "Missing fields" });
   }
   try {
-    const tick = await prismaClient.websiteTick.create({
+    const tick = await prisma.websiteTick.create({
       data: {
         website_id,
         region_id,

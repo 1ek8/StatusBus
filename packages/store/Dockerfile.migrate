@@ -2,7 +2,7 @@ FROM oven/bun:1-slim
 
 WORKDIR /app 
 
-COPY package.json bun.lock ./
+COPY package.json bun.lock prisma.config.ts ./
 COPY apps/api/package.json ./apps/api/
 COPY apps/consumer/package.json ./apps/consumer/
 COPY apps/fe/package.json ./apps/fe/
@@ -19,6 +19,7 @@ COPY packages/store/.env .env
 
 RUN apt-get update -y && apt-get install -y openssl
 RUN bun install --frozen-lockfile
-RUN bunx prisma generate --config=./packages/store/prisma.config.ts
+RUN bunx prisma generate --config=prisma.config.ts
+
 
 CMD ["bunx", "prisma", "migrate", "deploy"]

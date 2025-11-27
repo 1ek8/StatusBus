@@ -5,7 +5,7 @@ WORKDIR /app
 COPY ./apps/api ./apps/api
 COPY ./packages/store ./packages/store
 
-COPY package.json bun.lock ./
+COPY package.json bun.lock prisma.config.ts ./
 
 COPY apps/consumer/package.json ./apps/consumer/
 COPY apps/fe/package.json ./apps/fe/
@@ -22,12 +22,14 @@ RUN apt-get update -y && apt-get install -y openssl
 
 COPY apps/api/.env .env
 
-RUN bun install --frozen-lockfile --production
-RUN bunx prisma generate --config=./packages/store/prisma.config.ts
+RUN bun install --frozen-lockfile 
+RUN bunx prisma generate --config=prisma.config.ts
+
 
 COPY turbo.json .
 RUN cd apps/api && bun run build
 
+RUN bun install --frozen-lockfile --production
 FROM builder AS runner
 
 WORKDIR /app/apps/api

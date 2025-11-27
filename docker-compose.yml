@@ -21,10 +21,11 @@ services:
   prisma-migrate:
     build:
       context: .
-      dockerfile: Dockerfile.migrate
-    command: ["bunx", "prisma", "migrate", "deploy", "--config=./packages/store/prisma.config.ts"]
+      dockerfile: packages/store/Dockerfile.migrate
+    command: ["bunx", "prisma", "migrate", "deploy", "--config=prisma.config.ts"]
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/statusbus
+    # working_dir: /app/packages/store 
     depends_on:
       - postgres
 

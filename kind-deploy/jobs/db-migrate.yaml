@@ -14,7 +14,7 @@ spec:
           - sh
           - -c
           - |
-            bunx prisma migrate deploy --config=./packages/store/prisma.config.ts && \
+            bunx prisma migrate deploy --config=prisma.config.ts && \
             bun run ./packages/store/seedRegion.ts ; sleep 600
 
         env:
