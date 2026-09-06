@@ -17,7 +17,6 @@ dist
 build
 **/build
 .turbo
-repomix*
 gcp-config.dev
 **/node_modules
 artifact-reader-key.json
