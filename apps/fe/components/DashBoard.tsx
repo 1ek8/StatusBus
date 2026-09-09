@@ -42,7 +42,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
             BACKEND_URL + "/websites",
             {
                 headers: {
-                Authorization: localStorage.getItem("token"),
+                Authorization: `Bearer ${localStorage.getItem("token")}`,
                 },
             }
             );
@@ -83,7 +83,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
                 url: websiteUrl.trim()
             },
             {
-                headers: { Authorization: localStorage.getItem("token") } // Or sessionStorage, depending on your setup
+                headers: { Authorization: `Bearer ${localStorage.getItem("token")}` } // Or sessionStorage, depending on your setup
             });
             
             // Add the new website to the local state

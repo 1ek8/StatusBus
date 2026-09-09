@@ -1,5 +1,6 @@
 import express from "express";
 import jwt from "jsonwebtoken";
+import bcrypt from "bcryptjs";
 import { prisma }  from "store/client";
 import { AuthInput } from "./types";
 import { authMiddleWare } from "./middleware";
@@ -24,10 +25,11 @@ app.post("/user/signup", async (req, res) => {
         return;
     }
     try {
+        const hashedPassword = await bcrypt.hash(user_data.data.password, 10);
         let user = await prisma.user.create({
             data: {
                 username: user_data.data.username,
-                password: user_data.data.password
+                password: hashedPassword
             }
         })
         res.json({
@@ -46,19 +48,33 @@ app.post("/user/signin", async (req, res) => {
         return;
     }
     try {
-        let user = await prisma.user.findFirst({
+        let user = await prisma.user.findUnique({
             where: {
-                username: user_data.data.username,
-                password: user_data.data.password
+                username: user_data.data.username
             }
         })
         if (!user) {
             res.status(401).json({ error: "Invalid username or password" });
             return;
         }
+        const passwordMatches = await bcrypt.compare(user_data.data.password, user.password);
+        if (!passwordMatches) {
+            if (user.password === user_data.data.password) {
+                const hashedPassword = await bcrypt.hash(user.password, 10);
+                await prisma.user.update({
+                    where: { id: user.id },
+                    data: { password: hashedPassword }
+                });
+            } else {
+                res.status(401).json({ error: "Invalid username or password" });
+                return;
+            }
+        }
         let token = jwt.sign({
             sub: user.id
-        }, process.env.JWT_SECRET!)
+        }, process.env.JWT_SECRET!, {
+            expiresIn: "7d"
+        });
         res.json({
             jwt: token
         })
