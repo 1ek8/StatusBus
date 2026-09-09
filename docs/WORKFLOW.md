@@ -1,5 +1,7 @@
 # StatusBus — Workflow & Data Flow
 
+> Part of the StatusBus documentation set. Overview & quick start: [`../README.md`](../README.md)
+
 This document walks through the end-to-end behavior of StatusBus: how a user signs up,
 adds a website, and how the monitoring pipeline turns that website into per-region
 uptime ticks shown on the dashboard.

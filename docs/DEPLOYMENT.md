@@ -1,12 +1,19 @@
 # StatusBus — Deployment & CI/CD
 
+> Part of the StatusBus documentation set. Overview & quick start: [`../README.md`](../README.md)
+
 Three deployment targets exist:
 
 1. **Local (docker-compose)** — full stack on one machine for development.
 2. **Local Kubernetes (kind)** — cluster plus `deploy.sh` bootstrap for testing the k8s
    manifests locally.
-3. **GCP (GKE on GCE VMs)** — the production target: multi-node k8s, Cloud SQL, external
-   Redis, Artifact Registry, nginx ingress + cert-manager.
+3. **GCP (GKE)** — the production target: Kubernetes cluster, Artifact Registry images,
+   ingress + cert-manager for TLS, CI/CD pipeline.
+
+> **Deployment status:** the app is currently exercised locally (docker-compose and kind).
+> The GCP section below describes the intended production layout and the manifests used for
+> it; production provisioning is a planned step (the prior cluster has been decommissioned
+> and will be re-provisioned on a fresh account when internet deployment resumes).
 
 All apps are built with **Bun** (`oven/bun:1-slim` base images) and the images are made
 from the repo root context (workspace layout is recreated inside the image so Bun's
@@ -116,10 +123,10 @@ JWT_SECRET=<your-jwt-secret>
 ARTIFACT_REGISTRY=us-central1-docker.pkg.dev/statusbus-prod-123456/statusbus-repo
 ```
 
-> ⚠️ The checked-in `gcp-infra/gcp-config.env` contains **real live credentials**
-> (database password, JWT secret, public DB IP). It should be treated as a secret, removed
-> from the repo, and replaced with the `.example` template + per-environment secrets
-> manager storage. See Known Issues.
+> The real `gcp-infra/gcp-config.env` (with live `DATABASE_URL` / `JWT_SECRET` values) is
+> **gitignored** — only the sanitized `.example` is tracked. Keep it that way: never commit
+> real credentials; in production source secrets from a secrets manager / Kubernetes
+> Secrets instead.
 
 ### 3.2 Workload manifests
 
@@ -242,9 +249,9 @@ images `apt-get install openssl` because the generated client needs it at runtim
 8. **Infra footguns** —
    - `packages/store/Dockerfile.seeder` copies `packages/store/seedRegion.ts`, but the real
      seed script is `apps/api/seedRegion.ts`; the k8s jobs run `./packages/store/seedRegion.ts`.
-   - `gcp-infra/gcp-config.env` is committed with **live secrets** and should be replaced by
-     the `.example` + a secrets manager.
-   - The `cloudsql-key.json` / `artifact-reader-key.json` service-account keys are checked in.
+   - `gcp-infra/gcp-config.env` holds live credentials — it and the service-account keys
+     (`cloudsql-key.json`, `artifact-reader-key.json`, `github-actions-key.json`) are
+     **gitignored**; never commit them. Only the sanitized `.example` is tracked.
    - `api-deployment.yaml` (GCP) lacks the `imagePullSecrets`/volumes that the other GCP
      manifests carry; `fe-deployment.yaml` declares but never mounts its cloudsql volume.
    - Root `generated/client/` is a stale leftover of an earlier `prisma generate` cwd.

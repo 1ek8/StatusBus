@@ -1,135 +1,196 @@
-# Turborepo starter
+# StatusBus
 
-This Turborepo starter is maintained by the Turborepo core team.
+**Global website-uptime monitoring from a multi-region mesh of workers.**
 
-## Using this example
+StatusBus is an uptime monitoring service. Users add websites through a web dashboard and
+StatusBus automatically checks them at frequent intervals, records the response time, and
+flags each site as **Up** or **Down**. The interesting part is *how* it checks:
 
-Run the following command:
+- A single **producer** duty-cycles through every monitored website and publishes a "check
+  this URL" job onto a **Redis Stream** (`statusbus:web`) every 60 seconds.
+- **Consumers** run in consumer groups, one group per **region** (India, US, ...). Because
+  Redis consumer groups are separate per region, **every region receives every job** — each
+  site is independently probed from multiple parts of the world.
+- Each consumer performs a plain HTTP GET, times it (`rt_ms`), classifies it `Up`/`Down`,
+  reports the result back to a central API, and acknowledges the stream message.
+- The API persists every check as a `WebsiteTick` in **PostgreSQL**; the dashboard shows each
+  site's latest status, response time, and last-checked time.
 
-```sh
-npx create-turbo@latest
-```
+Built as a **Bun + Turborepo monorepo** — Express 5 API, Next.js 15 frontend, Redis-Stream
+workers, Prisma 7 data layer — designed to run via **Docker Compose**, **kind** (local
+Kubernetes), or a **GKE cluster** on production GCP.
 
-## What's inside?
+---
 
-This Turborepo includes the following packages/apps:
+## Feature Overview
 
-### Apps and Packages
+- Account signup / signin (JWT-based sessions).
+- Add and track any number of websites.
+- Dashboard showing each site's current status (`Up` / `Down` / `Unknown`), response time
+  and last-checked timestamp.
+- Checks run on a **60-second global cadence**, fanning out across all configured regions.
+- Automatic classification: any HTTP failure (network, DNS, TLS, non-2xx) is reported
+  `Down`; successful loads report `Up` with the measured round-trip time.
 
-- `docs`: a [Next.js](https://nextjs.org/) app
-- `web`: another [Next.js](https://nextjs.org/) app
-- `@repo/ui`: a stub React component library shared by both `web` and `docs` applications
-- `@repo/eslint-config`: `eslint` configurations (includes `eslint-config-next` and `eslint-config-prettier`)
-- `@repo/typescript-config`: `tsconfig.json`s used throughout the monorepo
+> The product is a work-in-progress proof-of-concept. Per-website detail pages, uptime
+> analytics, alerts, and edit/delete are not fully implemented yet — see
+> [Roadmap & Limitations](#roadmap--limitations).
 
-Each package/app is 100% [TypeScript](https://www.typescriptlang.org/).
-
-### Utilities
-
-This Turborepo has some additional tools already setup for you:
-
-- [TypeScript](https://www.typescriptlang.org/) for static type checking
-- [ESLint](https://eslint.org/) for code linting
-- [Prettier](https://prettier.io) for code formatting
-
-### Build
-
-To build all apps and packages, run the following command:
-
-```
-cd my-turborepo
-
-# With [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation) installed (recommended)
-turbo build
-
-# Without [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation), use your package manager
-npx turbo build
-yarn dlx turbo build
-pnpm exec turbo build
-```
-
-You can build a specific package by using a [filter](https://turborepo.com/docs/crafting-your-repository/running-tasks#using-filters):
+## Architecture at a glance
 
 ```
-# With [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation) installed (recommended)
-turbo build --filter=docs
-
-# Without [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation), use your package manager
-npx turbo build --filter=docs
-yarn exec turbo build --filter=docs
-pnpm exec turbo build --filter=docs
+Browser ──▶ apps/fe (Next.js, :3000)
+                 │  JWT + CORS
+                 ▼
+      apps/api (Express + Prisma, :3001) ──▶ PostgreSQL
+      public:   /user/signup, /user/signin,   (User, Website, Region, WebsiteTick)
+      internal: /website, /websites, /status/:id, /health,
+                /monitoring/websites, /monitoring/tick
+                 ▲                     │
+                 │  POST /monitoring/tick │  GET /monitoring/websites (every 60s)
+                 │  {website_id, region_id│  by the producer
+                 │   rt_ms, status}       ▼
+                 │              ┌────────────────────┐
+                 │              │ Redis Stream       │
+                 │              │ statusbus:web      │
+                 │              └─────────┬──────────┘
+                 │                        │ XREADGROUP (group = REGION_ID)
+                 │                        ▼
+                 │          apps/consumer × per region
+                 └──────   HTTP GET the URL → report tick → XACK
 ```
 
-### Develop
+Full detail in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-To develop all apps and packages, run the following command:
+## Repository layout
 
-```
-cd my-turborepo
+| Path | Role |
+|---|---|
+| `apps/api` | Express 5 REST API, JWT auth, zod validation |
+| `apps/fe` | Next.js 15 frontend (landing, auth, dashboard) |
+| `apps/producer` | Scheduler: publishes every website to the Redis stream each 60 s |
+| `apps/consumer` | Region worker: probes URLs and reports `WebsiteTick`s |
+| `apps/tests` | Bunny integration tests against a live API |
+| `packages/store` | Prisma 7 schema + generated client (`store/client`) |
+| `packages/redisq` | Redis Streams wrapper (xAdd / consumer groups / ack) |
+| `packages/shared-types` | Shared queue types (`MessageType`, `StreamEntry`) |
+| `kind-deploy` | Local Kubernetes manifests + `deploy.sh` bootstrap |
+| `gcp-infra` | Production Kubernetes manifests (GKE, ingress, cert-manager) |
 
-# With [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation) installed (recommended)
-turbo dev
+The whole design rationale (why Redis Streams, why fan-out, why central Postgres) is
+documented in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-# Without [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation), use your package manager
-npx turbo dev
-yarn exec turbo dev
-pnpm exec turbo dev
-```
+## Getting Started
 
-You can develop a specific package by using a [filter](https://turborepo.com/docs/crafting-your-repository/running-tasks#using-filters):
+### Prerequisites
 
-```
-# With [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation) installed (recommended)
-turbo dev --filter=web
+- **Bun** `>= 1.2.18` and **Node** `>= 18`
+- **Docker** + Docker Compose v2 (for the one-command stack)
+- `gcloud` + `kubectl` + `kind` (only for the Kubernetes flows)
 
-# Without [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation), use your package manager
-npx turbo dev --filter=web
-yarn exec turbo dev --filter=web
-pnpm exec turbo dev --filter=web
-```
+### Quick start with Docker Compose
 
-### Remote Caching
-
-> [!TIP]
-> Vercel Remote Cache is free for all plans. Get started today at [vercel.com](https://vercel.com/signup?/signup?utm_source=remote-cache-sdk&utm_campaign=free_remote_cache).
-
-Turborepo can use a technique known as [Remote Caching](https://turborepo.com/docs/core-concepts/remote-caching) to share cache artifacts across machines, enabling you to share build caches with your team and CI/CD pipelines.
-
-By default, Turborepo will cache locally. To enable Remote Caching you will need an account with Vercel. If you don't have an account you can [create one](https://vercel.com/signup?utm_source=turborepo-examples), then enter the following commands:
-
-```
-cd my-turborepo
-
-# With [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation) installed (recommended)
-turbo login
-
-# Without [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation), use your package manager
-npx turbo login
-yarn exec turbo login
-pnpm exec turbo login
+```bash
+cp .env.example .env        # then fill in POSTGRES_USER, POSTGRES_PASSWORD, DATABASE_URL, JWT_SECRET
+docker compose up --build
 ```
 
-This will authenticate the Turborepo CLI with your [Vercel account](https://vercel.com/docs/concepts/personal-accounts/overview).
+This brings up Postgres + Redis, runs `prisma migrate deploy`, then starts the API
+(`:3001`), frontend (`:3000`), producer, and consumer.
 
-Next, you can link your Turborepo to your Remote Cache by running the following command from the root of your Turborepo:
+**One-time prerequisite — seed the regions.** Consumers group by `REGION_ID` (1 = India,
+2 = US); those rows must exist. From the repo root (with `bun install` already run and
+`DATABASE_URL` reachable):
 
-```
-# With [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation) installed (recommended)
-turbo link
-
-# Without [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation), use your package manager
-npx turbo link
-yarn exec turbo link
-pnpm exec turbo link
+```bash
+DATABASE_URL=postgresql://<user>:<pass>@localhost:5432/statusbus bun run ./apps/api/seedRegion.ts
 ```
 
-## Useful Links
+Then:
 
-Learn more about the power of Turborepo:
+- Frontend: <http://localhost:3000>
+- API health: <http://localhost:3001/health>
+- API list of monitored sites: <http://localhost:3001/monitoring/websites>
 
-- [Tasks](https://turborepo.com/docs/crafting-your-repository/running-tasks)
-- [Caching](https://turborepo.com/docs/crafting-your-repository/caching)
-- [Remote Caching](https://turborepo.com/docs/core-concepts/remote-caching)
-- [Filtering](https://turborepo.com/docs/crafting-your-repository/running-tasks#using-filters)
-- [Configuration Options](https://turborepo.com/docs/reference/configuration)
-- [CLI Usage](https://turborepo.com/docs/reference/command-line-reference)
+### Running services individually (dev)
+
+```bash
+bun install              # install workspace deps
+bun run dev              # turbo dev → runs every app/package
+```
+
+Per-app scripts (each app has `build`; the API also has `start`). The API reads
+`apps/api/.env` for `DATABASE_URL`, `JWT_SECRET`, `PORT`, `HOST`; the consumer reads
+`REGION_ID` / `CONSUMER_ID`; workers use `REDIS_URL` and `API_URL`.
+
+### Local Kubernetes (kind)
+
+```bash
+cd kind-deploy
+./deploy.sh              # creates cluster, applies infra + secrets, migrates + seeds, deploys, port-forwards
+```
+
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
+### Tests
+
+Requires a running API on `:3001`:
+
+```bash
+cd apps/tests
+bun test
+```
+
+## Environment Variables
+
+| Variable | Used by | Purpose |
+|---|---|---|
+| `DATABASE_URL` | API, store, migration jobs | PostgreSQL connection string |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` | docker-compose | Local Postgres service credentials |
+| `JWT_SECRET` | API | HS256 secret for signing/verifying JWTs |
+| `REDIS_URL` | producer, consumer, redisq | Redis connection string |
+| `API_URL` | producer, consumer | Where to reach the backend (`http://api:3001` in Docker) |
+| `REGION_ID` / `CONSUMER_ID` | consumer | Region group name + consumer identity |
+| `NEXT_PUBLIC_BACKEND_URL` | frontend (build-time) | Base URL of the API, inlined into the client bundle |
+
+`PORT` / `HOST` are also respected by the API (defaults `3001` / `0.0.0.0`).
+
+## How the monitoring pipeline works
+
+1. **Producer** polls `GET /monitoring/websites` every 60 s and `XADD`s one entry per
+   website (`{url, id}`) to the Redis stream `statusbus:web`.
+2. **Consumer(s)** each own a Redis consumer group named after their `REGION_ID`. Every
+   group independently reads the full stream, so every region checks every website.
+3. For each job, the consumer `GET`s the URL, times it, and POSTs
+   `{website_id, region_id, rt_ms, status}` to `POST /monitoring/tick` on the API.
+4. The API writes a `WebsiteTick` row; the dashboard's `GET /websites` joins the latest
+   tick per site for display.
+
+Step-by-step detail, failure modes, and the full API reference live in
+[docs/WORKFLOW.md](docs/WORKFLOW.md).
+
+## Deployment
+
+Three targets are supported — see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for full details:
+
+1. **Docker Compose** — full stack locally (fastest iteration).
+2. **kind** — the same stack on a local Kubernetes cluster (`kind-deploy/deploy.sh`).
+3. **GKE (GCP)** — the production layout: Kubernetes cluster, Artifact Registry images,
+   ingress + cert-manager TLS, CI/CD pipeline in `.github/workflows/deploy.yml`.
+
+## Documentation
+
+| File | Covers |
+|---|---|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, components, data model, decisions |
+| [docs/WORKFLOW.md](docs/WORKFLOW.md) | End-to-end flows, queue contract, API reference, failure modes |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Compose + kind + GCP deployment, CI/CD, known issues |
+
+## Roadmap & Limitations
+
+- Password hashing (bcrypt/argon2) and hardened sign-in are on the short list.
+- Per-website detail pages, charts, uptime analytics, and edit/delete UI are not yet built.
+- The monitoring interval is a single global 60 s cadence (no per-site intervals yet).
+- Time-series analytics and alerting are future work — results currently live in Postgres.
+- See the "Known Issues & Future Work" appendix of
+  [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full catalogue.

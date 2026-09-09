@@ -1,5 +1,7 @@
 # StatusBus — System Architecture
 
+> Part of the StatusBus documentation set. Overview & quick start: [`../README.md`](../README.md)
+
 ## 1. Purpose & Goals
 
 StatusBus is a **globally-distributed website uptime monitoring service**. It orchestrates
@@ -220,7 +222,7 @@ rows (India=1, US=2) is a prerequisite for consumers.
 | Queue | Redis 7 Streams (`packages/redisq`) |
 | Database | PostgreSQL 15 via Prisma 7 (`@prisma/adapter-pg`) |
 | Tests | Bun test runner + axios integration tests |
-| Deployment | Docker / docker-compose, kind (local k8s), GKE on GCE VMs, GitHub Actions |
+| Deployment | Docker / docker-compose, kind (local k8s), GKE (production target), GitHub Actions |
 
 ## 7. Design Decisions & Tradeoffs
 
