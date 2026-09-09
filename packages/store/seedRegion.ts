@@ -1,4 +1,4 @@
-import { prisma } from 'store/client';
+import { prisma } from './src/client';
 
 const regionsToCreate = [
     { id: '1', name: 'India' },
@@ -8,10 +8,12 @@ const regionsToCreate = [
 async function main() {
     console.log(`Start seeding ...`);
     for (const regionData of regionsToCreate) {
-        const region = await prisma.region.create({
-            data: regionData,
+        const region = await prisma.region.upsert({
+            where: { id: regionData.id },
+            update: { name: regionData.name },
+            create: regionData,
         });
-        console.log(`Created region with id: ${region.id}`);
+        console.log(`Region ready: ${region.id} (${region.name})`);
     }
     console.log(`Seeding finished.`);
 }
