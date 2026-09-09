@@ -1,0 +1,21 @@
+# Override to run the monitoring pipeline (redis + producer + consumer) locally
+# against the PUBLIC StatusBus API + cloud database, instead of the local stack.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.cloudworkers.yml up -d redis producer consumer
+#
+services:
+  producer:
+    depends_on: !reset
+      redis:
+        condition: service_started
+    environment:
+      API_URL: https://api-statusbus.byaniket.site
+
+  consumer:
+    depends_on: !reset
+      redis:
+        condition: service_started
+    environment:
+      API_URL: https://api-statusbus.byaniket.site
+      REGION_ID: 1
+      CONSUMER_ID: india-consumer-1

@@ -9,7 +9,7 @@ const app = express();
 app.use(express.json());
 app.use(cors({
   origin: [
-    "https://statusbus.byaniket.online",
+    "https://statusbus.byaniket.site",
     "http://localhost:3000" // local development
   ],
   credentials: true,
@@ -177,7 +177,11 @@ app.get("/health", (req, res) => {
 });
 
 const PORT = Number(process.env.PORT);
-const HOST = process.env.HOST || '127.0.0.1';
+const HOST = process.env.HOST || '0.0.0.0';
+
+app.get("/", (req, res) => {
+    res.status(200).json({ status: "ok" })
+});
 
 app.listen(PORT, HOST, () => {
     console.log(`Server listening on http://${HOST}:${PORT}`);
