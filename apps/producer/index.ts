@@ -11,6 +11,7 @@ type WebsiteToMonitor = {
 }
 
 const API_URL = process.env.API_URL || "http://api:3001";
+const internalHeaders = { "x-internal-key": process.env.INTERNAL_KEY };
 
 class WebsiteListProducer {
     private isRunning = false
@@ -27,7 +28,7 @@ class WebsiteListProducer {
         let connected = false;
         for (let i = 0; i < 10; i++) {
             try {
-                await axios.get(`${API_URL}/monitoring/websites`);
+await axios.get(`${API_URL}/monitoring/websites`, { headers: internalHeaders });
                 connected = true;
                 console.log("API is reachable, starting monitoring jobs...");
                 break;
@@ -69,7 +70,7 @@ class WebsiteListProducer {
             //     }
             // });
 
-            const response = await axios.get(`${API_URL}/monitoring/websites`);
+            const response = await axios.get(`${API_URL}/monitoring/websites`, { headers: internalHeaders });
             const websites = response.data.websites; // [{id, url, user_id}]
 
             if (!websites || websites.length === 0) {

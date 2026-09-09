@@ -14,7 +14,7 @@ steps:
       - '--memory=512Mi'
       - '--cpu=1'
       - '--min-instances=0'
-      - '--set-secrets=DATABASE_URL=statusbus-db-url:latest,JWT_SECRET=statusbus-jwt:latest'
+      - '--set-secrets=DATABASE_URL=statusbus-db-url:latest,JWT_SECRET=statusbus-jwt:latest,INTERNAL_KEY=statusbus-internal-key:latest'
       - '--quiet'
 images:
   - '$_IMAGE'

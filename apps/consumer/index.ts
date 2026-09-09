@@ -4,6 +4,7 @@ import axios from "axios"
 import type { MessageType, StreamEntry } from "shared-types"
 
 const API_URL = process.env.API_URL || "http://api:3001";
+const internalHeaders = { "x-internal-key": process.env.INTERNAL_KEY };
 const REGION_ID = process.env.REGION_ID!;
 const CONSUMER_ID = process.env.CONSUMER_ID!;
 
@@ -105,7 +106,7 @@ class WebsiteListConsumer{
                 region_id: REGION_ID,
                 rt_ms: Date.now() - startTime,
                 status: "Up",
-                });
+                }, { headers: internalHeaders });
                 console.log('Event ID (success) : ', id)
             }).catch(async () => {
                 await axios.post(`${API_URL}/monitoring/tick`, {
@@ -113,7 +114,7 @@ class WebsiteListConsumer{
                 region_id: REGION_ID,
                 rt_ms: Date.now() - startTime,
                 status: "Down",
-                });
+                }, { headers: internalHeaders });
                 console.log('Event ID (fail) : ', id)
             }).finally(async () => {
                 try {

@@ -46,6 +46,7 @@ services:
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/statusbus
       - JWT_SECRET=${JWT_SECRET}
+      - INTERNAL_KEY=${INTERNAL_KEY}
       - PORT=3001
       - HOST=0.0.0.0
     depends_on:
@@ -72,6 +73,7 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379
       - API_URL=http://api:3001
+      - INTERNAL_KEY=${INTERNAL_KEY}
     depends_on:
       prisma-migrate:
         condition: service_completed_successfully
@@ -86,6 +88,7 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379
       - API_URL=http://api:3001
+      - INTERNAL_KEY=${INTERNAL_KEY}
       - REGION_ID=1
       - CONSUMER_ID=india-consumer-1
     depends_on:

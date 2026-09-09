@@ -25,6 +25,13 @@ Kubernetes), or a **GKE cluster** on production GCP.
 ## Feature Overview
 
 - Account signup / signin (JWT-based sessions).
+
+## Security
+
+See [SECURITY.md](SECURITY.md) — bcrypt-hashed passwords, expiring & strictly-parsed
+`Bearer` JWTs, and internal-key protection (`x-internal-key`) plus strict validation on
+the monitoring worker endpoints, keeping the application secure and robust.
+
 - Add and track any number of websites.
 - Dashboard showing each site's current status (`Up` / `Down` / `Unknown`), response time
   and last-checked timestamp.

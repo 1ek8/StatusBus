@@ -2,8 +2,8 @@ import express from "express";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import { prisma }  from "store/client";
-import { AuthInput } from "./types";
-import { authMiddleWare } from "./middleware";
+import { AuthInput, MonitoringTickInput } from "./types";
+import { authMiddleWare, internalAuth } from "./middleware";
 import cors from "cors";
 
 const app = express();
@@ -152,7 +152,7 @@ app.get("/websites", authMiddleWare, async (req, res) =>{
     res.json({ websites: formatted });
 });
 
-app.get("/monitoring/websites", async (req, res) => {
+app.get("/monitoring/websites", internalAuth, async (req, res) => {
   try {
     const websites = await prisma.website.findMany({
       select: {
@@ -167,12 +167,17 @@ app.get("/monitoring/websites", async (req, res) => {
   }
 });
 
-app.post("/monitoring/tick", async (req, res) => {
-  const { website_id, region_id, rt_ms, status } = req.body;
-  if (!website_id || !region_id || typeof rt_ms !== "number" || !status) {
-    return res.status(400).json({ error: "Missing fields" });
+app.post("/monitoring/tick", internalAuth, async (req, res) => {
+  const parsed = MonitoringTickInput.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid tick payload" });
   }
+  const { website_id, region_id, rt_ms, status } = parsed.data;
   try {
+    const region = await prisma.region.findUnique({ where: { id: region_id } });
+    if (!region) {
+      return res.status(404).json({ error: "Region does not exist" });
+    }
     const tick = await prisma.websiteTick.create({
       data: {
         website_id,
@@ -182,7 +187,10 @@ app.post("/monitoring/tick", async (req, res) => {
       },
     });
     res.json({ tick });
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.code === "P2003") {
+      return res.status(404).json({ error: "Website does not exist" });
+    }
     console.error('Tick creation failed:', error);
     res.status(500).json({ error: "Tick creation failed" });
   }

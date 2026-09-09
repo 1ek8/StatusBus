@@ -10,6 +10,7 @@ services:
         condition: service_started
     environment:
       API_URL: https://api-statusbus.byaniket.site
+      INTERNAL_KEY: ${INTERNAL_KEY}
 
   consumer:
     depends_on: !reset
@@ -17,5 +18,6 @@ services:
         condition: service_started
     environment:
       API_URL: https://api-statusbus.byaniket.site
+      INTERNAL_KEY: ${INTERNAL_KEY}
       REGION_ID: 1
       CONSUMER_ID: india-consumer-1
