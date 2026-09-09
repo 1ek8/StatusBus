@@ -22,12 +22,20 @@ services:
     build:
       context: .
       dockerfile: packages/store/Dockerfile.migrate
-    command: ["bunx", "prisma", "migrate", "deploy", "--config=prisma.config.ts"]
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/statusbus
-    # working_dir: /app/packages/store 
     depends_on:
       - postgres
+
+  seed-region:
+    build:
+      context: .
+      dockerfile: packages/store/Dockerfile.seeder
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/statusbus
+    depends_on:
+      prisma-migrate:
+        condition: service_completed_successfully
 
   api:
     build:
@@ -82,6 +90,8 @@ services:
       - CONSUMER_ID=india-consumer-1
     depends_on:
       prisma-migrate:
+        condition: service_completed_successfully
+      seed-region:
         condition: service_completed_successfully
       redis:
         condition: service_started

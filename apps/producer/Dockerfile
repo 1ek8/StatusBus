@@ -4,6 +4,7 @@ WORKDIR /app
 
 COPY ./apps/producer ./apps/producer
 COPY ./packages/redisq ./packages/redisq
+COPY ./packages/shared-types ./packages/shared-types
 
 COPY package.json bun.lock ./
 

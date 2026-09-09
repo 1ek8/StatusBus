@@ -37,19 +37,22 @@ Services (in dependency order):
 | --- | --- | --- | --- | --- |
 | `postgres` | `postgres:15` | `5432` | `POSTGRES_DB=statusbus`, user/pass from env | named volume `postgres_data` |
 | `redis` | `redis:7-alpine` | `6379` | — | named volume `redis_data` |
-| `prisma-migrate` | `packages/store/Dockerfile.migrate` | — | `DATABASE_URL` | runs `bunx prisma migrate deploy --config=prisma.config.ts`; `depends_on: postgres` |
+| `prisma-migrate` | `packages/store/Dockerfile.migrate` | — | `DATABASE_URL` | runs `bunx --bun prisma migrate deploy` from `/app/packages/store` (config auto-discovered); `depends_on: postgres` |
+| `seed-region` | `packages/store/Dockerfile.seeder` | — | `DATABASE_URL` | runs `bun seedRegion.ts` (idempotent upsert of India/US regions); waits for `prisma-migrate` success |
 | `api` | `apps/api/Dockerfile` | `3001` | `DATABASE_URL`, `JWT_SECRET`, `PORT=3001`, `HOST=0.0.0.0` | waits for `prisma-migrate` success; `restart: unless-stopped` |
 | `fe` | `apps/fe/Dockerfile` | `3000` | build arg `NEXT_PUBLIC_BACKEND_URL=http://127.0.0.1:3001` | `restart: unless-stopped` |
 | `producer` | `apps/producer/Dockerfile` | — | `REDIS_URL=redis://redis:6379`, `API_URL=http://api:3001` | waits for migrate + redis |
-| `consumer` | `apps/consumer/Dockerfile` | — | `REDIS_URL`, `API_URL`, `REGION_ID=1`, `CONSUMER_ID=india-consumer-1` | waits for migrate + redis |
+| `consumer` | `apps/consumer/Dockerfile` | — | `REDIS_URL`, `API_URL`, `REGION_ID=1`, `CONSUMER_ID=india-consumer-1` | waits for migrate + seed-region + redis |
 
 Notes:
 
-- `prisma-migrate` runs migrations but **not** the region seed. The consumer starts with
-  `REGION_ID=1`; for real testing the `Region` row id `1` must exist. Run the seeder:
-  `bun run ./apps/api/seedRegion.ts` (from a workspace with `DATABASE_URL` set).
-- The API Dockerfile copies `apps/api/.env` into the image as env — the image embeds local
-  dev values. This is only acceptable for local use (see Known Issues).
+- `prisma-migrate` runs migrations; `seed-region` then upserts the `Region` rows (`1` =
+  India, `2` = US) that the consumer (`REGION_ID=1`) and ticks depend on. Both must finish
+  before the consumer starts. The seeder script lives at
+  `packages/store/seedRegion.ts` and can also be run ad hoc:
+  `DATABASE_URL=... bun run ./packages/store/seedRegion.ts`.
+- The API image no longer copies any `.env` — all runtime configuration is injected as
+  environment variables by Compose/Kubernetes.
 - The API is reachable at `http://localhost:3001` (health: `GET /health`), FE at
   `http://localhost:3000`.
 
@@ -61,8 +64,8 @@ Infra lives under `kind-deploy/`.
 - `infra-deployments.yaml` — Postgres + Redis Deployments and ClusterIP Services
   (`postgres-service`, `redis-service`), storage via `emptyDir` (ephemeral).
 - `secrets.yaml` — `statusbus-secrets` secret with `database-url`, `jwt-secret`, `redis-url`.
-- `jobs/` — `db-migrate.yaml` (runs `bunx prisma migrate deploy --config=prisma.config.ts`
-  then `bun run ./packages/store/seedRegion.ts`), `seed-region.yaml` (seed only).
+- `jobs/` — `db-migrate.yaml` (runs `bunx --bun prisma migrate deploy` then
+  `bun run seedRegion.ts` from `/app/packages/store`), `seed-region.yaml` (seed only).
 - `deployments/` — api/fe/producer/consumer Deployments + Services. Images resolve to local
   tags such as `1ek8/statusbus-api:latest` (`imagePullPolicy: IfNotPresent`).
 
@@ -83,9 +86,10 @@ Service wiring inside the cluster: `fe-service:3000` (NodePort), `api-service:30
 (ClusterIP, `http://api-service:3001` used by workers), `postgres-service:5432`,
 `redis-service:6379`.
 
-> The db-migrate job reference to `./packages/store/seedRegion.ts` relies on the image
-> layout produced by `packages/store/Dockerfile.seeder`; today the seed source actually
-> lives at `apps/api/seedRegion.ts` (see Known Issues #8).
+> The migrate/seeder images set `WORKDIR /app/packages/store`, where Prisma 7
+> auto-discovers `prisma.config.ts`; the seed script is `packages/store/seedRegion.ts`
+> in the repo, so the job commands resolve without any `--config` flags or repo-relative
+> paths.
 
 ## 3. GCP Deployment (production target)
 
@@ -214,7 +218,7 @@ Notes:
 | `apps/consumer/Dockerfile` | repo root `apps/consumer` | same pattern → `bun dist/index.js`; bakes `REGION_ID` / `CONSUMER_ID` defaults |
 | `apps/fe/Dockerfile` | repo root `apps/fe` | `bun install` → `bun run build --filter fe` (Turbopack) → `bun run start`; `NEXT_PUBLIC_BACKEND_URL` build arg |
 | `packages/store/Dockerfile.migrate` | repo root `packages/store` | `bunx prisma generate` → `prisma migrate deploy` |
-| `packages/store/Dockerfile.seeder` | repo root `packages/store` | region seed runner (see Known Issues #8) |
+| `packages/store/Dockerfile.seeder` | repo root `packages/store` | region seed runner (`bun seedRegion.ts`) |
 
 Prisma is generated with `binaryTargets = ["native", "linux-arm64-openssl-1.1.x"]`, and
 images `apt-get install openssl` because the generated client needs it at runtime.
@@ -247,13 +251,12 @@ images `apt-get install openssl` because the generated client needs it at runtim
    uptime-% analytics & export, pro/free plans with per-site intervals (as low as 1 m),
    team access, audit logs, Redis cluster, synthetic browser checks (todo.txt).
 8. **Infra footguns** —
-   - `packages/store/Dockerfile.seeder` copies `packages/store/seedRegion.ts`, but the real
-     seed script is `apps/api/seedRegion.ts`; the k8s jobs run `./packages/store/seedRegion.ts`.
+   - `fe-deployment.yaml` declares a `cloudsql-key-volume` but never mounts it (dead
+     config); the api manifest was completed to match the consumer one (pull secret,
+     cloudsql volume, `envFrom`, `JWT_SECRET`).
    - `gcp-infra/gcp-config.env` holds live credentials — it and the service-account keys
      (`cloudsql-key.json`, `artifact-reader-key.json`, `github-actions-key.json`) are
      **gitignored**; never commit them. Only the sanitized `.example` is tracked.
-   - `api-deployment.yaml` (GCP) lacks the `imagePullSecrets`/volumes that the other GCP
-     manifests carry; `fe-deployment.yaml` declares but never mounts its cloudsql volume.
    - Root `generated/client/` is a stale leftover of an earlier `prisma generate` cwd.
 9. **Time-series DB not implemented** — `WebsiteTick` lives in Postgres; no Timescale/Influx
    layer yet.

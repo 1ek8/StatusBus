@@ -3,9 +3,10 @@ npm-debug.log
 .git
 .gitignore
 README.md
-.env
-.env.local
-.env.*.local
+**/.env
+**/.env.local
+**/.env.*.local
+**/.envrc
 coverage
 .nyc_output
 .DS_Store

@@ -8,7 +8,7 @@ spec:
       containers:
         - name: seed-region
           image: 1ek8/statusbus-seeder:latest
-          command: ["bun", "run", "./packages/store/seedRegion.ts"]
+          command: ["bun", "run", "seedRegion.ts"]
           env:
             - name: DATABASE_URL
               valueFrom:

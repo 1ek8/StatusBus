@@ -1,8 +1,11 @@
 FROM oven/bun:1-slim
 
-WORKDIR /app 
+WORKDIR /app
 
-COPY package.json bun.lock prisma.config.ts ./
+COPY package.json bun.lock ./
+
+# All workspace manifests must be present so `bun install --frozen-lockfile`
+# reproduces the exact dependency graph from bun.lock
 COPY apps/api/package.json ./apps/api/
 COPY apps/consumer/package.json ./apps/consumer/
 COPY apps/fe/package.json ./apps/fe/
@@ -11,15 +14,22 @@ COPY apps/tests/package.json ./apps/tests/
 COPY packages/eslint-config/package.json ./packages/eslint-config/
 COPY packages/redisq/package.json ./packages/redisq/
 COPY packages/shared-types/package.json ./packages/shared-types/
-COPY packages/store/package.json ./packages/store/
 COPY packages/typescript-config/package.json ./packages/typescript-config/
 
-COPY ./packages/store/ ./packages/store/
-COPY packages/store/.env .env
+# Everything the store package needs: prisma.config.ts, prisma/ (schema +
+# migrations), src/ (Prisma client) and seedRegion.ts
+COPY packages/store ./packages/store
 
-RUN apt-get update -y && apt-get install -y openssl
+# openssl is required by the generated Prisma client
+RUN apt-get update -y && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
+
+# Placeholder only — the real DATABASE_URL is injected at runtime
+ENV DATABASE_URL=postgresql://placeholder:placeholder@localhost:5432/statusbus?schema=public
+
 RUN bun install --frozen-lockfile
-RUN bunx prisma generate --config=prisma.config.ts
 
+# Prisma 7 auto-discovers prisma.config.ts from the working directory
+WORKDIR /app/packages/store
+RUN bunx --bun prisma generate
 
-CMD ["bunx", "prisma", "migrate", "deploy"]
+CMD ["bunx", "--bun", "prisma", "migrate", "deploy"]

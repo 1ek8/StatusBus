@@ -99,11 +99,12 @@ This brings up Postgres + Redis, runs `prisma migrate deploy`, then starts the A
 (`:3001`), frontend (`:3000`), producer, and consumer.
 
 **One-time prerequisite — seed the regions.** Consumers group by `REGION_ID` (1 = India,
-2 = US); those rows must exist. From the repo root (with `bun install` already run and
-`DATABASE_URL` reachable):
+2 = US); those rows must exist. `docker compose up` runs this automatically via the
+`seed-region` service, but for ad-hoc runs from the repo root (with `bun install` already
+run and `DATABASE_URL` reachable):
 
 ```bash
-DATABASE_URL=postgresql://<user>:<pass>@localhost:5432/statusbus bun run ./apps/api/seedRegion.ts
+DATABASE_URL=postgresql://<user>:<pass>@localhost:5432/statusbus bun run ./packages/store/seedRegion.ts
 ```
 
 Then:

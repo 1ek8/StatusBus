@@ -1,3 +1,4 @@
+# api-deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -14,15 +15,35 @@ spec:
       labels:
         app: api
     spec:
+      imagePullSecrets:
+      - name: gcp-artifact-registry-key
+
+      volumes:
+      - name: cloudsql-key-volume
+        secret:
+          secretName: gcp-cloudsql-key
+
       containers:
       - name: api
         image: asia-south2-docker.pkg.dev/quiet-spirit-475711-g3/statusbus-repo/api:latest
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 3001
+        envFrom:
+        - secretRef:
+            name: statusbus-postgres-credentials
         env:
         - name: DATABASE_URL
           value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@127.0.0.1:5432/statusbus?schema=public"
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: statusbus-secrets
+              key: jwt-secret
+        - name: HOST
+          value: "0.0.0.0"
+        - name: PORT
+          value: "3001"
         livenessProbe:
           httpGet:
             path: /health 
