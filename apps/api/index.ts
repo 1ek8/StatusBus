@@ -52,8 +52,12 @@ app.post("/user/signin", async (req, res) => {
                 password: user_data.data.password
             }
         })
+        if (!user) {
+            res.status(401).json({ error: "Invalid username or password" });
+            return;
+        }
         let token = jwt.sign({
-            sub: user?.id
+            sub: user.id
         }, process.env.JWT_SECRET!)
         res.json({
             jwt: token

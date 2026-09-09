@@ -12,17 +12,21 @@ const SignIn: React.FC = () => {
         username: '',
         password: ''
     });
+    const [error, setError] = useState('');
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        const response = await axios.post(`${BACKEND_URL}/user/signin`, {
-            username: formData.username,
-            password: formData.password
-        })
+        try {
+            const response = await axios.post(`${BACKEND_URL}/user/signin`, {
+                username: formData.username,
+                password: formData.password
+            })
 
-        localStorage.setItem("token", response.data.jwt)
-        console.log('Sign in:', formData);
-        router.push('/dashboard');
+            localStorage.setItem("token", response.data.jwt)
+            router.push('/dashboard');
+        } catch {
+            setError("Invalid username or password. Please try again.")
+        }
     };
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -56,6 +60,11 @@ const SignIn: React.FC = () => {
                     <p className="mt-2 text-center text-sm text-slate-400">
                         Sign in to your account to continue monitoring
                     </p>
+                    {error && (
+                        <p className="mt-4 text-center text-sm text-red-400" role="alert">
+                            {error}
+                        </p>
+                    )}
                 </div>
 
                 <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
