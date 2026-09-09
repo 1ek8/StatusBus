@@ -176,8 +176,14 @@ Three targets are supported — see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for
 
 1. **Docker Compose** — full stack locally (fastest iteration).
 2. **kind** — the same stack on a local Kubernetes cluster (`kind-deploy/deploy.sh`).
-3. **GKE (GCP)** — the production layout: Kubernetes cluster, Artifact Registry images,
-   ingress + cert-manager TLS, CI/CD pipeline in `.github/workflows/deploy.yml`.
+3. **Cloud Run (GCP, live)** — FE + API on Cloud Run behind the Cloudflare proxy
+   (`https://statusbus.byaniket.site` / `https://api-statusbus.byaniket.site`), PostgreSQL on
+   Neon, secrets in Secret Manager. Continuous deployment is wired to `main` through Cloud
+   Build triggers `statusbus-api-deploy` / `statusbus-fe-deploy`
+   ([`cloudbuild/statusbus-api.yaml`](cloudbuild/statusbus-api.yaml),
+   [`cloudbuild/statusbus-fe.yaml`](cloudbuild/statusbus-fe.yaml)). The Redis producer/consumer
+   monitoring mesh runs locally against the public API using the
+   `docker-compose.cloudworkers.yml` override.
 
 ## Documentation
 
