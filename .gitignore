@@ -49,6 +49,7 @@ github-actions-key.json
 # Private planning (never commit)
 PLAN.md
 deployment.md
+deployment-domain.md
 
 todo.txt
 

@@ -1,0 +1,31 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - '$_IMAGE'
+      - '-f'
+      - 'apps/fe/Dockerfile'
+      - '--build-arg'
+      - 'NEXT_PUBLIC_BACKEND_URL=https://api-statusbus.byaniket.site'
+      - '.'
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '$_IMAGE']
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - 'statusbus-fe'
+      - '--image=$_IMAGE'
+      - '--region=asia-south1'
+      - '--allow-unauthenticated'
+      - '--memory=512Mi'
+      - '--cpu=1'
+      - '--min-instances=0'
+      - '--quiet'
+images:
+  - '$_IMAGE'
+options:
+  logging: CLOUD_LOGGING_ONLY
+substitutions:
+  _IMAGE: asia-south1-docker.pkg.dev/${PROJECT_ID}/statusbus/statusbus-fe:${SHORT_SHA}

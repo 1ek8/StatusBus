@@ -1,0 +1,24 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', '$_IMAGE', '-f', 'apps/api/Dockerfile', '.']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '$_IMAGE']
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - 'statusbus-api'
+      - '--image=$_IMAGE'
+      - '--region=asia-south1'
+      - '--allow-unauthenticated'
+      - '--memory=512Mi'
+      - '--cpu=1'
+      - '--min-instances=0'
+      - '--set-secrets=DATABASE_URL=statusbus-db-url:latest,JWT_SECRET=statusbus-jwt:latest'
+      - '--quiet'
+images:
+  - '$_IMAGE'
+options:
+  logging: CLOUD_LOGGING_ONLY
+substitutions:
+  _IMAGE: asia-south1-docker.pkg.dev/${PROJECT_ID}/statusbus/statusbus-api:${SHORT_SHA}
