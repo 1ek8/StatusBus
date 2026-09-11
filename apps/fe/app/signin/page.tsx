@@ -4,25 +4,30 @@ import { Monitor, Eye, EyeOff, ArrowLeft } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import axios from "axios";
 import { BACKEND_URL } from '@/lib/utils';
+import { setToken } from '@/lib/auth';
 
 const SignIn: React.FC = () => {
     const router = useRouter();
     const [showPassword, setShowPassword] = useState(false);
     const [formData, setFormData] = useState({
         username: '',
-        password: ''
+        password: '',
+        rememberMe: false
     });
     const [error, setError] = useState('');
+    const [notice, setNotice] = useState('');
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        setError('');
+        setNotice('');
         try {
             const response = await axios.post(`${BACKEND_URL}/user/signin`, {
                 username: formData.username,
                 password: formData.password
             })
 
-            localStorage.setItem("token", response.data.jwt)
+            setToken(response.data.jwt, formData.rememberMe)
             router.push('/dashboard');
         } catch {
             setError("Invalid username or password. Please try again.")
@@ -30,10 +35,10 @@ const SignIn: React.FC = () => {
     };
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const { name, value } = e.target;
+        const { name, value, type, checked } = e.target;
         setFormData(prev => ({
             ...prev,
-            [name]: value
+            [name]: type === 'checkbox' ? checked : value
         }));
     };
 
@@ -131,11 +136,21 @@ const SignIn: React.FC = () => {
                         </div>
 
                         <div className="text-sm">
-                            <a href="#" className="text-blue-400 hover:text-blue-300 transition-colors">
+                            <button
+                                type="button"
+                                onClick={() => setNotice("Password reset is not available yet — please reach out to support in the meantime.")}
+                                className="text-blue-400 hover:text-blue-300 transition-colors"
+                            >
                                 Forgot your password?
-                            </a>
+                            </button>
                         </div>
                     </div>
+
+                    {notice && (
+                        <p className="text-sm text-amber-400 text-center" role="status">
+                            {notice}
+                        </p>
+                    )}
 
                     <div>
                         <button

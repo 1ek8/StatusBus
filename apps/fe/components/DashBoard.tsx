@@ -14,7 +14,9 @@ import {
 } from 'lucide-react';
 
 import axios from 'axios';
-import { BACKEND_URL } from '../lib/utils'; 
+import { useRouter } from 'next/navigation';
+import { BACKEND_URL } from '../lib/utils';
+import { getToken, clearToken } from '../lib/auth'; 
 
 interface Website {
     id: string;
@@ -31,25 +33,51 @@ interface DashboardProps {
 
 
 const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
+    const router = useRouter();
     const [ websites, setWebsites] = useState<Website[]>([]);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [websiteUrl, setWebsiteUrl] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [isLoading, setIsLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+    const [addError, setAddError] = useState<string | null>(null);
+
+    const handleSessionExpired = () => {
+        clearToken();
+        router.push('/signin');
+    };
+
+    const errorMessage = (err: unknown): string => {
+        if (axios.isAxiosError(err)) {
+            const data = err.response?.data as { error?: string } | undefined;
+            if (data?.error) return data.error;
+            if (err.response?.status === 401) return "Your session has expired. Please sign in again.";
+        }
+        return "Something went wrong. Please try again.";
+    };
 
     const fetchWebsites = async () => {
+        setIsLoading(true);
+        setError(null);
         try {
             const response = await axios.get(
             BACKEND_URL + "/websites",
             {
                 headers: {
-                Authorization: `Bearer ${localStorage.getItem("token")}`,
+                Authorization: `Bearer ${getToken()}`,
                 },
             }
             );
             setWebsites(response.data.websites);
-        } catch (error) {
-            console.error("Error fetching websites:", error);
-            // You may show an error toast or message to user
+        } catch (err) {
+            if (axios.isAxiosError(err) && err.response?.status === 401) {
+                setError("Your session has expired. Please sign in again.");
+                setTimeout(handleSessionExpired, 2000);
+            } else {
+                setError(errorMessage(err));
+            }
+        } finally {
+            setIsLoading(false);
         }
     };
 
@@ -78,12 +106,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
             return;
 
         setIsSubmitting(true);
+        setAddError(null);
         try {
             const response = await axios.post(`${BACKEND_URL}/website`, {
                 url: websiteUrl.trim()
             },
             {
-                headers: { Authorization: `Bearer ${localStorage.getItem("token")}` } // Or sessionStorage, depending on your setup
+                headers: { Authorization: `Bearer ${getToken()}` }
             });
             
             // Add the new website to the local state
@@ -101,9 +130,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
             await fetchWebsites();
             setWebsiteUrl('');
             setIsModalOpen(false);
-        } catch (error) {
-            console.error('Error adding website:', error);
-            // Need to add error
+        } catch (err) {
+            if (axios.isAxiosError(err) && err.response?.status === 401) {
+                handleSessionExpired();
+                return;
+            }
+            setAddError(errorMessage(err));
         } finally {
             setIsSubmitting(false);
         }
@@ -145,6 +177,30 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
 
             {/* Main Content */}
             <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+                {error && (
+                    <div className="mb-6 flex items-center justify-between bg-red-500/10 border border-red-500/40 rounded-xl px-4 py-3" role="alert">
+                        <div className="flex items-center space-x-2">
+                            <AlertTriangle className="h-5 w-5 text-red-400" />
+                            <p className="text-sm text-red-300">{error}</p>
+                        </div>
+                        {error.includes("session") ? (
+                            <button
+                                onClick={handleSessionExpired}
+                                className="px-3 py-1.5 text-sm rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-300 transition-colors"
+                            >
+                                Sign in again
+                            </button>
+                        ) : (
+                            <button
+                                onClick={() => setError(null)}
+                                className="text-red-400 hover:text-red-300 transition-colors"
+                            >
+                                <X className="h-5 w-5" />
+                            </button>
+                        )}
+                    </div>
+                )}
+
                 {/* Summary Cards */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
                     <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
@@ -290,7 +346,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
                 </div>
 
                 {/* Empty State (if no websites) */}    
-                {websites.length === 0 && (
+                {!isLoading && websites.length === 0 && !error && (
                     <div className="bg-slate-800 rounded-xl border border-slate-700 p-12 text-center">
                         <Monitor className="h-16 w-16 text-slate-600 mx-auto mb-4" />
                         <h3 className="text-xl font-semibold text-white mb-2">No websites being monitored</h3>
@@ -321,6 +377,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
                 </div>
                 
                 <div className="space-y-4">
+                    {addError && (
+                        <p className="text-sm text-red-400" role="alert">{addError}</p>
+                    )}
                     <div>
                     <label htmlFor="websiteUrl" className="block text-sm font-medium text-slate-300 mb-2">
                         Website URL
