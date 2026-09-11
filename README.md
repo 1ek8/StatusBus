@@ -199,10 +199,10 @@ Three targets are supported — see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, components, data model, decisions |
 | [docs/WORKFLOW.md](docs/WORKFLOW.md) | End-to-end flows, queue contract, API reference, failure modes |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Compose + kind + GCP deployment, CI/CD, known issues |
+| [docs/DEVELOPMENT-CHALLENGES.md](docs/DEVELOPMENT-CHALLENGES.md) | Challenges discovered during development & deployment, their fixes, interview review notes |
 
 ## Roadmap & Limitations
 
-- Password hashing (bcrypt/argon2) and hardened sign-in are on the short list.
 - Per-website detail pages, charts, uptime analytics, and edit/delete UI are not yet built.
 - The monitoring interval is a single global 60 s cadence (no per-site intervals yet).
 - Time-series analytics and alerting are future work — results currently live in Postgres.

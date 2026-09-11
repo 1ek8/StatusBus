@@ -1,4 +1,4 @@
-import { xAck, xAckBulk, xReadGroup, xGroupCreate } from "redisq/client"
+import { xAck, xReadGroup, xGroupCreate, xAutoClaim } from "redisq/client"
 // import { prismaClient } from "store/client";
 import axios from "axios"
 import type { MessageType, StreamEntry } from "shared-types"
@@ -44,12 +44,17 @@ class WebsiteListConsumer{
         } catch (error) {
             console.log(`Consumer group ${REGION_ID} already exists or error:`, error)
         }
-        await xGroupCreate(REGION_ID, "0");
     }
 
     private async processLoop() { 
         while(this.isRunning){
             try {
+                const stalled = await xAutoClaim(REGION_ID, CONSUMER_ID)
+                if (stalled.length > 0) {
+                    console.log(`Reclaiming ${stalled.length} stalled messages`)
+                    await this.jobProcessor(stalled)
+                }
+
                 const responses = await xReadGroup(REGION_ID, CONSUMER_ID)
 
                 if(responses.length > 0){
@@ -99,7 +104,7 @@ class WebsiteListConsumer{
         //     return;
         // }
 
-        await axios.get(messageUrl)
+        await axios.get(messageUrl, { timeout: 10_000 })
             .then(async () => {
                 await axios.post(`${API_URL}/monitoring/tick`, {
                 website_id: websiteId,

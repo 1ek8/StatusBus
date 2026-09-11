@@ -2,9 +2,30 @@ import express from "express";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import { prisma }  from "store/client";
-import { AuthInput, MonitoringTickInput } from "./types";
+import { AuthInput, MonitoringTickInput, WebsiteInput } from "./types";
 import { authMiddleWare, internalAuth } from "./middleware";
+import { assertPublicUrl } from "./lib/validateUrl";
 import cors from "cors";
+
+const MAX_WEBSITES_PER_USER = 25;
+
+const websiteRateLimit = (() => {
+    const limit = 20;
+    const windowMs = 60 * 60 * 1000;
+    const hits = new Map<string, number[]>();
+    return (userId: string, res: Response): boolean => {
+        const now = Date.now();
+        const recent = (hits.get(userId) ?? []).filter((t) => now - t < windowMs);
+        if (recent.length >= limit) {
+            hits.set(userId, recent);
+            res.status(429).json({ error: "Too many websites added recently, slow down" });
+            return false;
+        }
+        recent.push(now);
+        hits.set(userId, recent);
+        return true;
+    };
+})();
 
 const app = express();
 app.use(express.json());
@@ -85,18 +106,32 @@ app.post("/user/signin", async (req, res) => {
 })
 
 app.post("/website", authMiddleWare, async (req, res) => {
-    if(!req.body.url) {
-        return res.status(411).json({});
+    const parsed = WebsiteInput.safeParse(req.body);
+    if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid website URL" });
+    }
+    const url = parsed.data.url;
+    try {
+        await assertPublicUrl(url);
+    } catch (error) {
+        return res.status(422).json({ error: error instanceof Error ? error.message : "Invalid URL" });
+    }
+    if (!websiteRateLimit(req.user_id, res)) {
+        return;
+    }
+    const count = await prisma.website.count({ where: { user_id: req.user_id } });
+    if (count >= MAX_WEBSITES_PER_USER) {
+        return res.status(429).json({ error: "Website limit reached" });
     }
     const website = await prisma.website.create({
         data: {
-            url: req.body.url,
+            url,
             user_id: req.user_id,
             createdAt: new Date()
         }
     });
 
-    res.json({ id:website.id });
+    res.json({ id: website.id });
 });
 
 app.get("/status/:websiteId", authMiddleWare, async (req, res) => {
@@ -159,9 +194,22 @@ app.get("/monitoring/websites", internalAuth, async (req, res) => {
         id: true,
         url: true,
         user_id: true,
+        ticks: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: { status: true, createdAt: true },
+        },
       },
     });
-    res.json({ websites }); // [{ id, url, user_id }]
+    res.json({
+      websites: websites.map((w) => ({
+        id: w.id,
+        url: w.url,
+        user_id: w.user_id,
+        lastStatus: w.ticks[0]?.status ?? "Unknown",
+        lastCheckedAt: w.ticks[0]?.createdAt?.toISOString() ?? null,
+      })),
+    });
   } catch (error) {
     res.status(500).json({ error: "Unable to fetch websites to monitor" });
   }

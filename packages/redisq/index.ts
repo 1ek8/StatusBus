@@ -9,6 +9,7 @@ const client = await createClient({ url: process.env.REDIS_URL })
 
 type websiteArgs = { url: string, id: string }
 const STREAM_NAME = 'statusbus:web'
+const STREAM_MAX_LEN = 100_000
 
 export async function xAdd({ url, id }: websiteArgs) {
     await client.xAdd(
@@ -25,6 +26,31 @@ export async function xAddBulk(websites: websiteArgs[]) {
             id: website.id
         })
     }
+}
+
+export async function capStream() {
+    await client.xTrim(STREAM_NAME, 'MAXLEN', STREAM_MAX_LEN, { strategyModifier: '~' })
+}
+
+export async function xAutoClaim(
+    consumerGroup: string,
+    consumerId: string,
+    minIdleTimeMs: number = 5 * 60 * 1000,
+    count: number = 10
+): Promise<StreamEntry<MessageType>[]> {
+    const response = await client.xAutoClaim(STREAM_NAME, consumerGroup, consumerId, minIdleTimeMs, '0', {
+        COUNT: count
+    });
+
+    const claimed: StreamEntry<MessageType>[] = [];
+    for (const raw of response.messages ?? []) {
+        const url = raw.message?.url;
+        const id = raw.message?.id;
+        if (typeof url === 'string' && typeof id === 'string') {
+            claimed.push({ id: raw.id, message: { url, id } });
+        }
+    }
+    return claimed;
 }
 
 // Add this new function

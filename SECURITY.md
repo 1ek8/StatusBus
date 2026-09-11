@@ -50,3 +50,8 @@ These are protected by the **`x-internal-key` shared-secret header**:
 - Strict CORS allowlist (only the StatusBus domain and `localhost:3000`).
 - The Redis queue and local database are only reachable on the local network; the public
   API exposes a minimal surface (auth, website CRUD, status, health).
+- **Website URL validation + rate limiting** — new sites must be public `http(s)`; IPs and
+  hostnames that are private, loopback, or resolve to private addresses are rejected, and
+  per-user add rate limits plus a hard site cap prevent abuse. This closes the SSRF hole a
+  monitoring system's probes could otherwise be. See
+  [docs/DEVELOPMENT-CHALLENGES.md](docs/DEVELOPMENT-CHALLENGES.md).

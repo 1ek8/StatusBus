@@ -5,6 +5,10 @@ export const AuthInput = z.object({
     password: z.string()
 })
 
+export const WebsiteInput = z.object({
+    url: z.string().trim().min(1).max(2048)
+})
+
 export const MonitoringTickInput = z.object({
     website_id: z.string().uuid(),
     region_id: z.string(),
