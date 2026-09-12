@@ -200,6 +200,7 @@ Three targets are supported — see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for
 | [docs/WORKFLOW.md](docs/WORKFLOW.md) | End-to-end flows, queue contract, API reference, failure modes |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Compose + kind + GCP deployment, CI/CD, known issues |
 | [docs/DEVELOPMENT-CHALLENGES.md](docs/DEVELOPMENT-CHALLENGES.md) | Challenges discovered during development & deployment, their fixes, interview review notes |
+| [docs/ARCHITECTURE-DECISIONS.md](docs/ARCHITECTURE-DECISIONS.md) | Architecture decision log: spot-worker bootstrap model, second-region strategy, cross-continent k8s rationale |
 
 ## Roadmap & Limitations
 
