@@ -38,7 +38,9 @@ yarn-error.log*
 *.pem
 
 #Cloud
-gcp-infra
+gcp-infra/*
+!gcp-infra/k8s/
+!gcp-infra/k8s/**
 gcp-config.env
 artifact-reader-key.json
 cloudsql-key.json

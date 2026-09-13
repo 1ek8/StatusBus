@@ -1,0 +1,42 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'asia-south1-docker.pkg.dev/${PROJECT_ID}/statusbus/statusbus-producer:${SHORT_SHA}'
+      - '-t'
+      - 'asia-south1-docker.pkg.dev/${PROJECT_ID}/statusbus/statusbus-producer:latest'
+      - '-f'
+      - 'apps/producer/Dockerfile'
+      - '.'
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'asia-south1-docker.pkg.dev/${PROJECT_ID}/statusbus/statusbus-producer:${SHORT_SHA}'
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'asia-south1-docker.pkg.dev/${PROJECT_ID}/statusbus/statusbus-producer:latest'
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'asia-south1-docker.pkg.dev/${PROJECT_ID}/statusbus/statusbus-consumer:${SHORT_SHA}'
+      - '-t'
+      - 'asia-south1-docker.pkg.dev/${PROJECT_ID}/statusbus/statusbus-consumer:latest'
+      - '-f'
+      - 'apps/consumer/Dockerfile'
+      - '.'
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'asia-south1-docker.pkg.dev/${PROJECT_ID}/statusbus/statusbus-consumer:${SHORT_SHA}'
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'asia-south1-docker.pkg.dev/${PROJECT_ID}/statusbus/statusbus-consumer:latest'
+images:
+  - 'asia-south1-docker.pkg.dev/${PROJECT_ID}/statusbus/statusbus-producer'
+  - 'asia-south1-docker.pkg.dev/${PROJECT_ID}/statusbus/statusbus-consumer'
+options:
+  logging: CLOUD_LOGGING_ONLY

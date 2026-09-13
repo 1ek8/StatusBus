@@ -7,6 +7,8 @@ const API_URL = process.env.API_URL || "http://api:3001";
 const internalHeaders = { "x-internal-key": process.env.INTERNAL_KEY };
 const REGION_ID = process.env.REGION_ID!;
 const CONSUMER_ID = process.env.CONSUMER_ID!;
+const CONSUMER_POLL_MS = (parseInt(process.env.CONSUMER_POLL_SEC || "60", 10)) * 1000;
+const CONSUMER_RECLAIM_MS = (parseInt(process.env.CONSUMER_RECLAIM_INTERVAL_SEC || "300", 10)) * 1000;
 
 if (!REGION_ID) {
     throw new Error("Region not provided");
@@ -47,12 +49,17 @@ class WebsiteListConsumer{
     }
 
     private async processLoop() { 
+        let lastReclaim = 0
         while(this.isRunning){
             try {
-                const stalled = await xAutoClaim(REGION_ID, CONSUMER_ID)
-                if (stalled.length > 0) {
-                    console.log(`Reclaiming ${stalled.length} stalled messages`)
-                    await this.jobProcessor(stalled)
+                const now = Date.now()
+                if (now - lastReclaim >= CONSUMER_RECLAIM_MS) {
+                    lastReclaim = now
+                    const stalled = await xAutoClaim(REGION_ID, CONSUMER_ID)
+                    if (stalled.length > 0) {
+                        console.log(`Reclaiming ${stalled.length} stalled messages`)
+                        await this.jobProcessor(stalled)
+                    }
                 }
 
                 const responses = await xReadGroup(REGION_ID, CONSUMER_ID)
@@ -63,8 +70,8 @@ class WebsiteListConsumer{
                     // const promisesArray = responses.map(async ({ id, message }) => await fetchWebsite(id, message.url, message.id))        
                     // await Promise.all(promisesArray)
                 } else {
-                    // if no jobs yet pushed -> responses.length == 0 ->  superloop becomes resource-intensive -> 1 sec timeout converts this loop into a 1sec interval polling function to avoid overloading system
-                    await new Promise(resolve => setTimeout(resolve, 1000))
+                    // sleep between idle polls to stay within the Redis command budget
+                    await new Promise(resolve => setTimeout(resolve, CONSUMER_POLL_MS))
                 }
             }
             // } catch (error) {

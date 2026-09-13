@@ -18,7 +18,7 @@ const internalHeaders = { "x-internal-key": process.env.INTERNAL_KEY };
 class WebsiteListProducer {
     private isRunning = false
     private intervalId : intervalObject = null 
-    private MONITORING_INTERVAL = 1*60*1000
+    private MONITORING_INTERVAL = (parseInt(process.env.PRODUCER_INTERVAL_SEC || "300", 10)) * 1000
     private BACKOFF_BASE = 5*60*1000
     private BACKOFF_CAP = 20*60*1000
     private consecutiveDown = new Map<string, number>()
