@@ -9,7 +9,7 @@ the rationale — and the mistakes that preceded it — are in the repo, not los
 
 ## 1. Decision: Spot workers + on-demand control plane, with self-healing bootstrap
 
-**Status:** agreed; implementation planned (not yet built).
+**Status:** agreed; Phase 1–2 implemented and live (see §3).
 
 **The plan in one paragraph.** The new k8s target is a self-managed kubeadm cluster where
 the **control plane node is on-demand** (never reclaimed; holds etcd + apiserver) and the
@@ -152,7 +152,145 @@ A is the plan.
 
 ---
 
-## 3. Learnings extracted (one-liners)
+## 3. Phase 2 execution — implementation issues and learnings
+
+**Status:** implemented and live (cluster running, self-healing proven).
+
+Phase 1 committed the bootstrap scripts and image builds. Phase 2 was the real bring-up
+of the kubeadm cluster: control plane, worker MIG, join, and chaos-test verification. The
+core problem was that none of these scripts had been tested on actual VMs — every bug
+appeared the moment they hit a real GCP Ubuntu image.
+
+### 3.1 Process
+
+1. Created the control plane VM (`k8s-control-plane`, on-demand, `asia-south1-a`, `e2-small`)
+   with the startup script attached via `--metadata-from-file`.
+2. Polled Secret Manager for `k8s-join-command` (the signal that `kubeadm init` finished
+   and published the token). Timed out after 12 minutes.
+3. Pulled serial output via `gcloud compute instances get-serial-port-output` — found the
+   startup script failed before kubeadm ever ran. Root-caused, fixed the script, deleted
+   the VM + boot disk (`--delete-disks=all`), recreated from scratch.
+4. Repeat. Total: 3 full boot cycles before the control plane came up clean.
+5. Once the join command appeared, created `k8s-worker-template` (spot, `e2-small`) +
+   `k8s-workers` MIG (size 2). Workers booted, installed packages, and then entered a
+   retry loop: "join command not published yet" × 30. Root cause: `sm_get` sed parsing
+   was silently returning empty because Secret Manager returns pretty-printed JSON.
+6. Recreated workers with the fixed script (via MIG rolling replace), nodes joined,
+   Calico brought them to Ready. Verified 3/3 nodes, all kube-system pods Running.
+7. Ran the chaos test: `gcloud compute instances delete k8s-workers-db9m` → MIG
+   detected the loss, `CREATING` appeared immediately, replacement booted, joined,
+   Ready within 3 minutes. Cluster back to 3/3.
+
+### 3.2 Bugs discovered
+
+**Bug 1: `/etc/containerd/config.toml` directory missing**
+
+The base `ubuntu-2204-lts` GCP image ships containerd as a binary package but does not
+create `/etc/containerd/`. The script's `containerd config default > /etc/containerd/config.toml`
+failed immediately with "No such file or directory", and `set -e` killed the entire startup
+script before kubeadm init ever ran.
+
+*Fix:* `mkdir -p /etc/containerd` before the redirect. Applied identically to both
+`control-plane.sh` and `worker.sh`.
+
+**Bug 2: `br_netfilter` kernel module not loaded**
+
+After fixing Bug 1 and rerunning, `kubeadm init` failed at preflight:
+`/proc/sys/net/bridge/bridge-nf-call-iptables does not exist`. The kernel module `br_netfilter`
+was never loaded, so the sysctl the script wrote to `/etc/sysctl.d/k8s.conf` had nothing to
+apply against. (The module needs an explicit `modprobe`; it does not auto-load on this
+image.)
+
+*Fix:* `echo br_netfilter > /etc/modules-load.d/k8s.conf` + `modprobe br_netfilter` before
+`sysctl --system`. The `modules-load.d` entry persists across reboots.
+
+**Bug 3: Secret Manager pretty-printed JSON breaks `sm_get`**
+
+This was the worker-join blocker. The `sm_get` sed pattern in all three bootstrap scripts
+was:
+
+```bash
+sed -n 's/.*"payload":{"data":"\([^"]*\)".*/\1/p' | base64 -d
+```
+
+The Secret Manager REST API actually returns:
+
+```json
+{
+  "name": "projects/.../secrets/.../versions/latest",
+  "payload": {
+    "data": "base64...",
+    "dataCrc32c": "..."
+  }
+}
+```
+
+The multi-line format means the regex `"payload":{"data":"..."` never matches a single
+line — so `sm_get` returns empty, the retry loop exhausts, and the script exits. The
+control plane never hit this because it only *writes* secrets (`sm_set`); workers only
+*read* via `sm_get`. Identical code, opposite direction, completely different failure
+mode.
+
+*Fix:* whitespace-tolerant sed + `head -1`:
+
+```bash
+sed -n 's/.*"data"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | base64 -d | head -1
+```
+
+Applied to all three scripts (`control-plane.sh`, `worker.sh`, `us-consumer.sh`).
+
+### 3.3 GCP platform constraints
+
+Three GCP-specific constraints that took repeated cycles to discover:
+
+**Constraint 1: Spot instances in MIGs require `instance-termination-action=STOP`**
+
+Trying to create an instance template with `--provisioning-model=SPOT --instance-termination-action=DELETE`
+for use in a managed instance group produces:
+
+> *"Spot virtual machines with termination action set to DELETE cannot be used with Managed
+Instance Groups."*
+
+This is a GCP policy: MIGs with spot VMs must use STOP. The self-healing story is preserved —
+when a spot VM is preempted, the instance enters TERMINATED state, the MIG detects the
+state change and recreates it from the template (per GCP docs: *"MIGs always attempt to
+maintain their target size... the group repeatedly tries to recreate those VMs"*). The
+chaos test (manual instance delete) also confirms MIG recreation works.
+
+**Constraint 2: Instance templates need full regional subnet URLs**
+
+Global instance templates cannot reference a subnet by bare name (`default`) — the template
+doesn't know which region's "default" subnet to use:
+
+> *"Scope of the specified subnetwork doesn't match the scope of the instance."*
+
+*Fix:* pass the full URL:
+`https://www.googleapis.com/compute/v1/projects/$PROJECT_ID/regions/asia-south1/subnetworks/default`
+
+**Constraint 3: MIG instance templates are pinned — update requires a new name**
+
+A global instance template referenced by a MIG cannot be deleted or replaced in place.
+Attempting to `delete k8s-worker-template` while the MIG references it fails with
+*"already being used by instanceGroupManagers"*. Worse: deleting and recreating with
+the *same name* produces a new resource object, but the MIG still holds a reference to
+the original — the old startup script keeps running until you explicitly call
+`set-instance-template` to switch and trigger a rolling replace.
+
+*Fix:* create `k8s-worker-template-v2`, `set-instance-template` → v2, rolling replace,
+then delete the stale v1.
+
+### 3.4 Debug interface
+
+The serial console (`gcloud compute instances get-serial-port-output --port=1`) was the
+primary debug interface throughout — not SSH. This was unplanned but became the only
+reliable way to diagnose startup script failures before the control plane existed and
+before SSH keys were injected. Every bug above was root-caused via serial output grep,
+not via an SSH session. Build scripts around `log()` output that survives serial; do not
+assume you can SSH in during bootstrap.
+
+---
+
+## 4. Learnings extracted (one-liners)
 
 1. **Recovery must live in the infrastructure**, not in the README. If node replacement has
    no provisioning automation, it doesn't work — spot simply makes that obvious.
@@ -166,16 +304,41 @@ A is the plan.
 5. **Pin everything.** Tag drift is a silent deploy-time killer.
 6. **Probe from where you claim to probe.** Region labels must match physical location or the
    dashboard lies.
+7. **Serial console first, SSH second.** On a fresh VM where SSH keys aren't injected and
+   kubeconfig doesn't exist yet, the serial console is the only debug path. Build startup
+   scripts around `log()` output that survives serial, not around commands that need a
+   shell session.
+8. **Secret Manager returns pretty-printed JSON.** A `sed` regex that assumes compact
+   JSON (`"payload":{"data":"..."`) will silently fail against the real API response.
+   Always parse with whitespace tolerance (`[[:space:]]*`) or use a tool that handles
+   formatting.
+9. **Write-path success ≠ read-path success.** A secret-publishing script (write) doesn't
+   exercise the read format. `sm_set` succeeded on the control plane; `sm_get` — same
+   data, opposite direction — returned empty on workers. Always test both sides.
+10. **Instance templates are names, not objects.** Deleting and recreating a template with
+    the same name does *not* update the MIG — the MIG holds a reference to the resource
+    object, not the name. Create a new name and switch the MIG explicitly via
+    `set-instance-template`.
+11. **MIGs + spot in GCP: STOP, not DELETE.** Spot VMs in a managed instance group cannot
+    use `instance-termination-action=DELETE`. The MIG still auto-repairs on preemption
+    (instance enters TERMINATED → MIG recreates), but the termination action must be STOP.
+12. **GCP global templates need full regional subnet URLs.** A bare `subnet=default`
+    reference resolves to the wrong region and fails with a scope mismatch. Pass the full
+    resource URL.
 
 ---
 
 ## Repo pointers
 
-- `gcp-infra/` — legacy manifests + suspend/resume/tunnel scripts (the old model, kept as
-  reference; a fresh reimplementation is planned).
+- `gcp-infra/k8s/bootstrap/` — the startup scripts whose bugs and fixes are documented
+  in §3: `control-plane.sh`, `worker.sh`, `us-consumer.sh`.
+- `gcp-infra/k8s/create-vms.sh` — the orchestration script (control plane + worker MIG +
+  US consumer MIG); includes the regional subnet URL fix and STOP termination action.
 - `docs/ARCHITECTURE.md`, `docs/WORKFLOW.md` — design + flow docs this decision log refines.
 - `docs/DEVELOPMENT-CHALLENGES.md` — the engineer-facing bug/fix history (consumer-group +
-  `XAUTOCLAIM` specifics referenced above).
+  `XAUTOCLAIM` specifics, monitoring endpoint security, SSRF protection, Redis stream
+  hardening).
 - `packages/redisq/index.ts` — stream/group/`XAUTOCLAIM` implementation.
-- `apps/producer/index.ts`, `apps/consumer/index.ts` — workers that will run on the planned
-  spot nodes.
+- `apps/producer/index.ts`, `apps/consumer/index.ts` — workers that now run on the live
+  spot nodes (cadence env vars `PRODUCER_INTERVAL_SEC`, `CONSUMER_POLL_SEC`,
+  `CONSUMER_RECLAIM_INTERVAL_SEC`).

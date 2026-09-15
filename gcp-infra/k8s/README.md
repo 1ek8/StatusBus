@@ -3,9 +3,10 @@
 > Part of the StatusBus docs. Architecture rationale is in
 > [`docs/ARCHITECTURE-DECISIONS.md`](../../docs/ARCHITECTURE-DECISIONS.md).
 
-This is the *planned* replacement for the legacy `gcp-infra/*.yaml` manifests
-(which target the decommissioned project). The live public edge stays on
-Cloud Run (`statusbus-api` / `statusbus-fe`); this cluster runs **only the
+This is the active deployment for StatusBus worker infrastructure.
+It replaces the legacy `gcp-infra/*.yaml` manifests (which targeted the
+decommissioned project). The live public edge stays on Cloud Run
+(`statusbus-api` / `statusbus-fe`); this cluster runs **only the
 workers** (producer + India consumer) plus a standalone spot VM for the US
 consumer.
 
@@ -49,13 +50,19 @@ consumer.
 - **Control plane:** on-demand, etcd/apiserver on a persistent boot disk. If
   the VM is ever recreated, reattach the disk — the bootstrap skips init
   (`/etc/kubernetes/kubelet.conf` present) and only refreshes the join token.
-- **Workers:** spot (`--provisioning-model=SPOT`). Eviction deletes the VM;
-  the zonal Managed Instance Group recreates it, the startup script installs
-  the runtime and re-joins via the Secret Manager join command. Tokens are
-  created with `--ttl=0` (cluster-lifetime).
+- **Workers:** spot (`--provisioning-model=SPOT`). Spot VMs in a MIG must use
+  `--instance-termination-action=STOP` (DELETE is rejected by GCP for MIGs).
+  On preemption the instance enters TERMINATED state and the MIG recreates it
+  from the template; the startup script installs the runtime and re-joins via
+  the Secret Manager join command. Tokens are created with `--ttl=0`
+  (cluster-lifetime).
 - **US consumer:** spot MIG in us-central1-a; the container respawns after
   eviction, picking up where consumer-group `2` left off (Redis `XAUTOCLAIM`
   recovers in-flight probes).
+
+> Background on the GCP constraints hit during bring-up (pretty-printed Secret
+> Manager JSON, `br_netfilter`, `/etc/containerd`, template pinning): see
+> [`docs/ARCHITECTURE-DECISIONS.md`](../../docs/ARCHITECTURE-DECISIONS.md) §3.
 
 ## Verification
 
