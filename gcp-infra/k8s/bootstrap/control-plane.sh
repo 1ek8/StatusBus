@@ -25,7 +25,7 @@ sm_get() {
   local token; token="$(sm_token)"
   curl -sf -H "Authorization: Bearer $token" \
     "https://secretmanager.googleapis.com/v1/projects/$PROJECT/secrets/$1/versions/latest:access" \
-    | sed -n 's/.*"payload":{"data":"\([^"]*\)".*/\1/p' | base64 -d
+    | sed -n 's/.*"data"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | base64 -d | head -1
 }
 sm_create() {
   local token; token="$(sm_token)"
@@ -60,12 +60,15 @@ if [ ! -f /var/lib/statusbus-bootstrap-done ]; then
   apt-mark hold kubelet kubeadm kubectl
 
   log "configuring containerd + kernel"
+  mkdir -p /etc/containerd
   containerd config default > /etc/containerd/config.toml
   sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
-  systemctl enable --now containerd
+  systemctl restart containerd
 
   swapoff -a
   sed -i '/swap/d' /etc/fstab || true
+  echo br_netfilter > /etc/modules-load.d/k8s.conf
+  modprobe br_netfilter || true
   tee /etc/sysctl.d/k8s.conf >/dev/null <<'EOF'
 net.bridge.bridge-nf-call-iptables = 1
 net.ipv4.ip_forward = 1

@@ -24,7 +24,7 @@ sm_get() {
   local token; token="$(sm_token)"
   curl -sf -H "Authorization: Bearer $token" \
     "https://secretmanager.googleapis.com/v1/projects/$PROJECT/secrets/$1/versions/latest:access" \
-    | sed -n 's/.*"payload":{"data":"\([^"]*\)".*/\1/p' | base64 -d
+    | sed -n 's/.*"data"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | base64 -d | head -1
 }
 
 apt_get() { DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold' "$@"; }

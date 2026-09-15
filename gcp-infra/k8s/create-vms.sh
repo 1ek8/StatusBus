@@ -15,7 +15,7 @@ SRC="variables.env"
 source "$HERE/$SRC"
 
 CONTROL_NAME="k8s-control-plane"
-WORKER_TEMPLATE="k8s-worker-template"
+WORKER_TEMPLATE="k8s-worker-template-v2"
 WORKERS_MIG="k8s-workers"
 US_TEMPLATE="us-consumer-template"
 US_MIG="us-consumers"
@@ -62,10 +62,12 @@ else
   log "control plane VM already exists; skipping create"
 fi
 
+SUBNET_URL="https://www.googleapis.com/compute/v1/projects/$PROJECT_ID/regions/${CLUSTER_ZONE%-*}/subnetworks/$SUBNET"
+
 gcloud compute instance-templates create "$WORKER_TEMPLATE" \
   --project="$PROJECT_ID" \
   --machine-type="$MACHINE_TYPE" \
-  --network-interface=subnet="$SUBNET" \
+  --network-interface="subnet=$SUBNET_URL" \
   --image-family="$IMAGE_FAMILY" --image-project="$IMAGE_PROJECT" \
   --boot-disk-size="$BOOT_DISK_SIZE" --boot-disk-type=pd-standard \
   --metadata-from-file=startup-script="$HERE/bootstrap/worker.sh" \
@@ -73,7 +75,7 @@ gcloud compute instance-templates create "$WORKER_TEMPLATE" \
   --tags="$NETWORK_TAG" \
   --labels=role=worker \
   --provisioning-model=SPOT \
-  --instance-termination-action=DELETE \
+  --instance-termination-action=STOP \
   --quiet >/dev/null 2>&1 || true
 
 gcloud compute instance-groups managed create "$WORKERS_MIG" \
@@ -87,7 +89,7 @@ log "4/4 US consumer group"
 gcloud compute instance-templates create "$US_TEMPLATE" \
   --project="$PROJECT_ID" \
   --machine-type="$MACHINE_TYPE" \
-  --network-interface=subnet="default" \
+  --network-interface=subnet="https://www.googleapis.com/compute/v1/projects/$PROJECT_ID/regions/${US_ZONE%-*}/subnetworks/default" \
   --image-family="$IMAGE_FAMILY" --image-project="$IMAGE_PROJECT" \
   --boot-disk-size="20" --boot-disk-type=pd-standard \
   --metadata-from-file=startup-script="$HERE/bootstrap/us-consumer.sh" \
@@ -96,7 +98,7 @@ gcloud compute instance-templates create "$US_TEMPLATE" \
   --tags="$NETWORK_TAG" \
   --labels=role=consumer,region=us \
   --provisioning-model=SPOT \
-  --instance-termination-action=DELETE \
+  --instance-termination-action=STOP \
   --quiet >/dev/null 2>&1 || true
 
 gcloud compute instance-groups managed create "$US_MIG" \
