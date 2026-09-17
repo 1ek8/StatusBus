@@ -41,6 +41,8 @@ yarn-error.log*
 gcp-infra/*
 !gcp-infra/k8s/
 !gcp-infra/k8s/**
+gcp-infra/k8s/keys/
+gcp-infra/k8s/variables.env
 gcp-config.env
 artifact-reader-key.json
 cloudsql-key.json

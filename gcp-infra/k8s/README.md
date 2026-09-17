@@ -45,6 +45,23 @@ consumer.
    workers auto-join from the join command published to Secret Manager, and
    the `us-consumer` container starts probing from us-central1.
 
+## Applying the worker workloads
+
+```bash
+# one-time: Artifact Registry pull secret + worker env secrets + namespace
+./setup-cluster-secrets.sh
+
+# producer (control plane) + India consumers (anti-affinity across spot workers)
+{ cat manifests/producer.yaml; printf '\n---\n'; cat manifests/india-consumer.yaml; } \
+  | gcloud compute ssh k8s-control-plane --zone=asia-south1-a --tunnel-through-iap \
+      --command='sudo KUBECONFIG=/etc/kubernetes/admin.conf kubectl apply -f -'
+```
+
+The control-plane bootstrap switches Calico from IP-in-IP to **VXLAN**: GCP drops
+IP-in-IP (protocol 4), so without the patch pods on different nodes cannot reach
+each other (worker → CoreDNS times out). VXLAN uses `udp/4789`, which the
+`allow-k8s-internal` firewall rule permits.
+
 ## Self-healing model
 
 - **Control plane:** on-demand, etcd/apiserver on a persistent boot disk. If

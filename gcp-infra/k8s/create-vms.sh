@@ -17,7 +17,7 @@ source "$HERE/$SRC"
 CONTROL_NAME="k8s-control-plane"
 WORKER_TEMPLATE="k8s-worker-template-v2"
 WORKERS_MIG="k8s-workers"
-US_TEMPLATE="us-consumer-template"
+US_TEMPLATE="us-consumer-template-v2"
 US_MIG="us-consumers"
 
 PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"
@@ -26,7 +26,7 @@ COMPUTE_SA="$PROJECT_NUMBER-compute@developer.gserviceaccount.com"
 log() { echo "[create-vms] $*"; }
 
 log "1/4 IAM — granting compute SA Secret Manager + artifact access"
-for role in roles/secretmanager.admin; do
+for role in roles/secretmanager.admin roles/artifactregistry.reader; do
   gcloud projects add-iam-policy-binding "$PROJECT_ID" \
     --member="serviceAccount:$COMPUTE_SA" --role="$role" \
     --condition=None --quiet >/dev/null 2>&1 || true
@@ -35,7 +35,7 @@ done
 log "2/4 firewall — k8s node traffic + IAP SSH"
 gcloud compute firewall-rules create allow-k8s-internal \
     --project="$PROJECT_ID" \
-    --allow=tcp:6443,tcp:10250,udp:4789,tcp:2379-2380,tcp:30000-32767 \
+    --allow=tcp:6443,tcp:10250,udp:4789,tcp:179,tcp:2379-2380,tcp:30000-32767 \
     --source-tags="$NETWORK_TAG" --target-tags="$NETWORK_TAG" \
     --quiet >/dev/null 2>&1 || true
 gcloud compute firewall-rules create allow-iap-ssh \

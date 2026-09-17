@@ -39,7 +39,9 @@ if [ ! -f /var/lib/statusbus-bootstrap-done ]; then
   curl -fsSL \
     https://github.com/GoogleCloudPlatform/docker-credential-gcr/releases/download/v2.1.22/docker-credential-gcr_linux_amd64-2.1.22.tar.gz \
     | tar xz -C /usr/local/bin docker-credential-gcr
-  docker-credential-gcr configure-docker
+  # configure-docker defaults to GCR hosts only; Artifact Registry needs the
+  # image's registry host explicitly or the pull goes out unauthenticated.
+  docker-credential-gcr configure-docker --registries="${CONSUMER_IMAGE%%/*}"
 
   touch /var/lib/statusbus-bootstrap-done
 fi

@@ -1,0 +1,61 @@
+# StatusBus India consumer — 2 replicas spread across the spot workers by
+# hostname anti-affinity. REGION_ID=1 matches the India consumer group; each
+# pod uses its own name as the Redis consumer ID so replicas never steal each
+# other's messages (see apps/consumer/index.ts).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: statusbus-consumer-india
+  namespace: statusbus-workloads
+  labels:
+    app: statusbus-consumer
+    region: india
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: statusbus-consumer
+  template:
+    metadata:
+      labels:
+        app: statusbus-consumer
+        region: india
+    spec:
+      imagePullSecrets:
+        - name: gcp-artifact-registry-key
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: statusbus-consumer
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: consumer
+          image: asia-south1-docker.pkg.dev/statusbus-app-1ek8/statusbus/statusbus-consumer:latest
+          imagePullPolicy: Always
+          env:
+            - name: API_URL
+              value: https://api-statusbus.byaniket.site
+            - name: REGION_ID
+              value: "1"
+            - name: CONSUMER_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: CONSUMER_POLL_SEC
+              value: "60"
+            - name: CONSUMER_RECLAIM_INTERVAL_SEC
+              value: "300"
+          envFrom:
+            - secretRef:
+                name: statusbus-worker-env
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"

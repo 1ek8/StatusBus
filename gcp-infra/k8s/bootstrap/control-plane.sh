@@ -98,6 +98,17 @@ if [ ! -f /etc/kubernetes/kubelet.conf ]; then
   log "installing Calico CNI (pinned v3.27.3)"
   kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.27.3/manifests/calico.yaml
 
+  # GCP drops IP-in-IP (protocol 4), Calico's default encapsulation. Switch the
+  # cross-node tunnel to VXLAN (udp/4789, allowed by the k8s firewall rule) or
+  # pods on different nodes cannot reach each other (e.g. worker -> CoreDNS).
+  log "switching Calico encapsulation to VXLAN"
+  for i in $(seq 1 30); do
+    kubectl patch ippool default-ipv4-ippool --type=merge \
+      -p '{"spec":{"ipipMode":"Never","vxlanMode":"Always"}}' && break
+    sleep 5
+  done
+  kubectl -n kube-system rollout restart daemonset/calico-node || true
+
   log "labeling node"
   kubectl label node "$HOSTNAME" nodeType=control-plane --overwrite
 else
