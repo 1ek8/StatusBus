@@ -12,9 +12,9 @@ The application runs on three deployment shapes:
    the k8s manifests locally.
 
 > **History:** an earlier internet deployment ran the whole stack on **GKE** (nginx ingress +
-> cert-manager, Cloud SQL). That project was decommissioned; its manifests still live under
-> `gcp-infra/` but target the dead account and are slated for removal. All live worker
-> hosting now lives under `gcp-infra/k8s/` (see [`gcp-infra/k8s/README.md`](../gcp-infra/k8s/README.md)).
+> cert-manager, Cloud SQL). That project was decommissioned and its manifests were removed
+> from the repo; all live worker hosting lives under `gcp-infra/k8s/` (see
+> [`gcp-infra/k8s/README.md`](../gcp-infra/k8s/README.md)).
 
 All apps are built with **Bun** (`oven/bun:1-slim` base images) and the images are made
 from the repo root context (workspace layout is recreated inside the image so Bun's
