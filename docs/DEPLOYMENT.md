@@ -2,25 +2,74 @@
 
 > Part of the StatusBus documentation set. Overview & quick start: [`../README.md`](../README.md)
 
-Three deployment targets exist:
+The application runs on three deployment shapes:
 
-1. **Local (docker-compose)** — full stack on one machine for development.
-2. **Local Kubernetes (kind)** — cluster plus `deploy.sh` bootstrap for testing the k8s
-   manifests locally.
-3. **GCP (GKE)** — the production target: Kubernetes cluster, Artifact Registry images,
-   ingress + cert-manager for TLS, CI/CD pipeline.
+1. **Live production (GCP, current)** — Cloud Run (API/FE) + Neon Postgres + Upstash Redis,
+   with the **worker mesh** on a self-managed kubeadm cluster (India consumers) and a
+   standalone spot VM (US consumer).
+2. **Local (docker-compose)** — the full stack on one machine for development.
+3. **Local Kubernetes (kind)** — cluster plus `kind-deploy/deploy.sh` bootstrap for testing
+   the k8s manifests locally.
 
-> **Deployment status:** the app is currently exercised locally (docker-compose and kind).
-> The GCP section below describes the intended production layout and the manifests used for
-> it; production provisioning is a planned step (the prior cluster has been decommissioned
-> and will be re-provisioned on a fresh account when internet deployment resumes).
+> **History:** an earlier internet deployment ran the whole stack on **GKE** (nginx ingress +
+> cert-manager, Cloud SQL). That project was decommissioned; its manifests still live under
+> `gcp-infra/` but target the dead account and are slated for removal. All live worker
+> hosting now lives under `gcp-infra/k8s/` (see [`gcp-infra/k8s/README.md`](../gcp-infra/k8s/README.md)).
 
 All apps are built with **Bun** (`oven/bun:1-slim` base images) and the images are made
 from the repo root context (workspace layout is recreated inside the image so Bun's
 lockfile + Prisma generation resolve correctly). The runtime `bun dist/index.js` runs the
 bundled output.
 
-## 1. Local Development — docker-compose
+## 1. Live Production (current)
+
+```
+   Cloudflare
+      │  https://statusbus.byaniket.site        https://api-statusbus.byaniket.site
+      ▼
+ Cloud Run             (asia-south1)
+   statusbus-fe ──────────▶ statusbus-api ──▶ Neon Postgres (ap-south-1, free tier)
+         │                       ▲
+         │   /monitoring/* (x-internal-key)   │  GET /monitoring/websites (producer, 5 min)
+         ▼                       │            ▼
+   kubeadm cluster (asia-south1-a)      Upstash Redis (ap-south-1, free tier)
+   ├─ k8s-control-plane (on-demand) ▶ producer + XADD → stream statusbus:web
+   └─ k8s-worker-1/2 (spot, MIG)     ▶ consumer REGION_ID=1 (x2, anti-affinity)
+   us-consumers (spot MIG, us-central1-a) ▶ consumer REGION_ID=2 (docker, standalone)
+```
+
+| Layer | Where | Character |
+| --- | --- | --- |
+| FE + API | Cloud Run, `asia-south1` | always-on, behind Cloudflare; domain `statusbus.byaniket.site` / `api-statusbus.byaniket.site` |
+| Database | **Neon** Postgres (`ap-south-1`) | free tier; connection URL in Secret Manager as `statusbus-db-url` |
+| Redis | **Upstash** (`ap-south-1`) | free tier (500 K commands/mo, currently ~160 K est.); URL in Secret Manager as `statusbus-redis-url` |
+| India consumers | kubeadm cluster `asia-south1-a` | control plane (on-demand, `e2-small`) + 2 spot workers (MIG), consumer group `1` |
+| US consumer | standalone spot VM `us-central1-a` (MIG) | dockerized consumer, group `2`, `CONSUMER_ID` from container hostname |
+| Secrets | GCP Secret Manager | `statusbus-db-url`, `statusbus-redis-url`, `statusbus-internal-key`, `k8s-join-command` (+ SM admin on the compute SA) |
+| Cost guardrail | GCP budget | INR 2500 (~$30) on billing account, thresholds 60/90/100 %, default email alerts (`gcp-infra/k8s/create-budget.sh`) |
+
+### Worker bring-up & ops
+
+The worker mesh is the "infrastructure" half and is documented in its own readme:
+
+- Bring-up, image build, secrets, workload applies: [`../gcp-infra/k8s/README.md`](../gcp-infra/k8s/README.md).
+- Rationale (spot + bootstrap model, second-region strategy): [`docs/ARCHITECTURE-DECISIONS.md`](./ARCHITECTURE-DECISIONS.md).
+- Day-2 procedures (node loss, disk reattach, image rebuild, join-token refresh):
+  [`docs/RUNBOOK.md`](./RUNBOOK.md).
+
+Cost baseline (as of the k8s rollout, `e2-small`, asia-south1 + us-central1):
+
+| Resource | Model | ~$/mo |
+| --- | --- | --- |
+| k8s-control-plane | on-demand | ~15 |
+| 2 workers | spot | ~8 |
+| us-consumer | spot | ~4 |
+| Upstash Redis | free tier | 0 |
+| Neon | free tier | 0 |
+| Cloud Run api/fe | as-used | ~1–2 |
+| **Total** | | **~28–30** |
+
+## 2. Local Development — docker-compose
 
 `docker-compose.yml` at the repo root runs the whole stack. Required environment on the
 host (see `.env.example`): `POSTGRES_USER`, `POSTGRES_PASSWORD`, `DATABASE_URL`,
@@ -55,8 +104,10 @@ Notes:
   environment variables by Compose/Kubernetes.
 - The API is reachable at `http://localhost:3001` (health: `GET /health`), FE at
   `http://localhost:3000`.
+- Cadence defaults come from the apps themselves: producer `PRODUCER_INTERVAL_SEC=300`,
+  consumer `CONSUMER_POLL_SEC=60` / `CONSUMER_RECLAIM_INTERVAL_SEC=300`.
 
-## 2. Local Kubernetes — kind
+## 3. Local Kubernetes — kind
 
 Infra lives under `kind-deploy/`.
 
@@ -91,123 +142,24 @@ Service wiring inside the cluster: `fe-service:3000` (NodePort), `api-service:30
 > in the repo, so the job commands resolve without any `--config` flags or repo-relative
 > paths.
 
-## 3. GCP Deployment (production target)
-
-Cluster topology (as used for the original rollout):
-
-- **Region / zone**: `asia-south2` / `asia-south2-a`.
-- **Compute**: 3 GCE VMs — `k8s-control-plane`, `k8s-worker-1`, `k8s-worker-2` — running GKE
-  (kubeadm/self-managed-style; kubectl is tunneled through IAP rather than a managed
-  endpoint).
-- **Database**: Cloud SQL Postgres instance `statusbus-postgres`, accessed via
-  `cloud-sql-proxy` **sidecars** on `127.0.0.1:5432` inside each workload pod.
-- **Redis**: external Redis at an internal IP (`10.5.54.3:6379` in the last known config).
-- **Artifact Registry**: image repo `asia-south2-docker.pkg.dev/<project>/statusbus-repo`,
-  auth via the `gcp-artifact-registry-key` imagePullSecret.
-- **Ingress**: nginx ingress controller + cert-manager (Let's Encrypt prod, HTTP-01) issuing
-  `statusbus-tls-cert` for `statusbus.byaniket.online` and `api.statusbus.byaniket.online`.
-- **IAP**: SSH to the control plane is restricted to Google's IAP ranges (`35.235.240.0/20`)
-  and GCP health-checkers (Calico `GlobalNetworkPolicy` in `allow-iap-ssh.yaml`).
-
-### 3.1 Reference configuration
-
-`gcp-infra/gcp-config.env.example` is the sanitized template:
-
-```
-PROJECT_ID=statusbus-prod-123456
-PROJECT_NUMBER=987654321234
-REGION=us-central1
-CONNECTION_NAME=statusbus-prod-123456:us-central1:statusbus-postgres
-DB_INSTANCE=statusbus-postgres
-DB_NAME=statusbus
-DB_PASSWORD=<your-secure-password>
-REDIS_HOST=<your-redis-ip>
-REDIS_PORT=6379
-JWT_SECRET=<your-jwt-secret>
-ARTIFACT_REGISTRY=us-central1-docker.pkg.dev/statusbus-prod-123456/statusbus-repo
-```
-
-> The real `gcp-infra/gcp-config.env` (with live `DATABASE_URL` / `JWT_SECRET` values) is
-> **gitignored** — only the sanitized `.example` is tracked. Keep it that way: never commit
-> real credentials; in production source secrets from a secrets manager / Kubernetes
-> Secrets instead.
-
-### 3.2 Workload manifests
-
-- `api-deployment.yaml` — API Deployment (1 replica, port 3001) + `cloud-sql-proxy`
-  sidecar; liveness/readiness probes on `/health` (15 s/20 s and 5 s/10 s).
-  `DATABASE_URL` uses env substitution:
-  `postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@127.0.0.1:5432/statusbus?schema=public`.
-  Proxy auth from `/secrets/key.json` mounted from the `gcp-cloudsql-key` secret.
-- `consumer-deployment.yaml` — 2 replicas; secrets `statusbus-postgres-credentials` +
-  `statusbus-redis-connection` via `envFrom`; `REGION_ID=1`, `CONSUMER_ID=india-consumer-1`;
-  cloud-sql-proxy sidecar.
-- `producer-deployment.yaml` — 1 replica; same secret wiring (no region vars); sidecar.
-- `fe-deployment.yaml` — 1 replica, port 3000; `NEXT_PUBLIC_BACKEND_URL=https://api.statusbus.byaniket.online`.
-- `internal-service.yaml` — `api-service` (ClusterIP 3001) and `fe-service` (ClusterIP 3000).
-- `external-service.yaml` — `fe-external-service` NodePort (nodePort 30080) for direct access.
-- `ingress-rules.yaml` — `statusbus-ingress` (nginx class): TLS via `statusbus-tls-cert`,
-  `statusbus.byaniket.online` → `fe-service:3000`, `api.statusbus.byaniket.online` →
-  `api-service:3001`; CORS annotations. `ingress-resource.yaml` is an earlier draft for the
-  root domain `byaniket.online`.
-- `cert-manager.yaml` — `letsencrypt-prod` ClusterIssuer (ACME HTTP-01, nginx class).
-- `allow-iap-ssh.yaml` — Calico policy (SSH-in only from IAP + health checkers; allow all egress).
-
-### 3.3 Manual setup steps (one-time)
-
-1. **GCP project & auth** — enable required APIs; create the Cloud SQL instance
-   (`statusbus-postgres`) and an external Redis instance; note `CONNECTION_NAME` and
-   `REDIS_HOST`.
-2. **Artifact Registry** — create repo `statusbus-repo`; store the service-account key that
-   can push (e.g. `artifact-reader-key.json`).
-3. **Cluster + tunnel** — boot the VMs (`gcloud compute instances start`), then tunnel to
-   the API server through IAP:
-   ```bash
-   gcloud compute ssh k8s-control-plane --zone asia-south2-a --tunnel-through-iap \
-       -- -N -L 8443:127.0.0.1:6443
-   ```
-   Point kubectl at `https://127.0.0.1:8443`.
-4. **Kubernetes secrets** (must exist before deployments):
-   - `statusbus-secrets` / env secrets: `database-url`, `jwt-secret`, `redis-url`
-     (kind: `kind-deploy/secrets.yaml`; GCP: `statusbus-postgres-credentials`,
-     `statusbus-redis-connection`).
-   - `gcp-cloudsql-key` — service-account key for Cloud SQL proxy (`cloudsql-key.json`),
-     mounted at `/secrets/key.json`.
-   - `gcp-artifact-registry-key` — docker-registry imagePullSecret for `gcp-artifact-registry-key`.
-   - `statusbus-tls-cert` — created automatically by cert-manager once the Ingress is applied.
-5. **Ingress controller** — install nginx ingress; apply `ingress-service.yaml`
-   (LoadBalancer on 80/443); cert-manager via `cert-manager.yaml`, then `ingress-rules.yaml`.
-6. **Deploy** — apply internal services → deployments → ingress.
-7. **DNS** — point `statusbus.byaniket.online` and `api.statusbus.byaniket.online` at the
-   ingress LoadBalancer IP (or use external DNS provider records).
-
-### 3.4 Day-2 operations
-
-- **Start / stop** (cost control) — `gcp-infra/gcloud-start.sh` resumes the 3 VMs and sets
-  Cloud SQL `--activation-policy=ALWAYS`; `gcloud-stop.sh` suspends them and sets
-  `--activation-policy=NEVER`.
-- **Access** — `kubectl_script.sh` re-opens the IAP SSH tunnel when needed.
-- **Redeploy a new API image** — see CI/CD below.
-
 ## 4. CI/CD
 
-`.github/workflows/deploy.yml` runs on push to `main`/`master` and on `workflow_dispatch`.
+Two pipelines push images; the *edge* apps deploy themselves, the *workers* are fetched
+by the VMs' startup scripts at boot.
 
-| Job | Purpose |
-| --- | --- |
-| `detect-change` | Compares `HEAD` vs `HEAD^`; sets output `api=true` if `apps/api/` or `packages/` changed. |
-| `checkout-and-list` | Reference job (log output for debugging). |
-| `build-and-push-api` | Runs only if `detect-change.api == 'true'`. Auth to GCP (`GCP_SA_KEY`), `gcloud auth configure-docker`, `docker buildx build --platform=linux/amd64` from `apps/api/Dockerfile`, pushes `:<sha>` + `:latest` to Artifact Registry. Then writes the kubeconfig from `KUBE_CONFIG_DATA` and runs `kubectl set image deployment/api-deployment api=<image>:<sha>` + `kubectl rollout status`. |
+| Image | Trigger | Pipeline |
+| --- | --- | --- |
+| `statusbus-api` | push to `main` | Cloud Build trigger `statusbus-api-deploy` ([`cloudbuild/statusbus-api.yaml`](../cloudbuild/statusbus-api.yaml)) → Cloud Run |
+| `statusbus-fe` | push to `main` | Cloud Build trigger `statusbus-fe-deploy` ([`cloudbuild/statusbus-fe.yaml`](../cloudbuild/statusbus-fe.yaml)) → Cloud Run |
+| `producer` / `consumer` | manual | `gcloud builds submit --config cloudbuild/statusbus-workers.yaml .` — pushes `:latest` to Artifact Registry; re-provisioned VMs pull at boot |
 
-Required GitHub secrets: `GCP_PROJECT_ID`, `ARTIFACT_REGISTRY_LOCATION`,
-`GCP_SA_KEY`, `KUBE_CONFIG_DATA`. Env (`deploy.yml`): `REPOSITORY=statusbus-repo`,
-`SERVICE_NAME=api`.
+Worker image tags are set in `gcp-infra/k8s/variables.env` (`CONSUMER_IMAGE`,
+`PRODUCER_IMAGE`, `US_CONSUMER_IMAGE`) and baked into the VM bootstrap at
+`create-vms.sh` time; after a rebuild, roll the MIGs (see
+[`docs/RUNBOOK.md`](./RUNBOOK.md) §4).
 
-Notes:
-- Only the **api** image is currently built/deployed by CI. The fe/producer/consumer images
-  are expected to keep coming from the `:latest` tags pinned in GCP manifests.
-- `detect-change` keys off `apps/api/` and `packages/` (any package change rebuilds api), so
-  a `packages/store` schema change triggers an API rebuild.
+> The older GitHub Actions pipeline (`deploy.yml`, `KUBE_CONFIG_DATA` secret) deployed the
+> API to the decommissioned GKE cluster and is no longer used.
 
 ## 5. Build resources
 
@@ -227,51 +179,35 @@ images `apt-get install openssl` because the generated client needs it at runtim
 
 ### 6.1 Current bugs / gaps in the codebase
 
-1. **Passwords stored in plaintext** — signup stores the password verbatim; signin compares
-   plaintext. Must use `bcrypt`/`argon2`.
-2. **Credential-less sign-in** — `POST /user/signin` does `findFirst` and signs a JWT with
-   `user?.id`. A username/password that matches nothing still gets a `200 { jwt }` (with
-   `sub: undefined`), so sign-in effectively never fails. (todo.txt)
-3. **No auth hardening** — JWT has no expiry; `Authorization` header is parsed verbatim with
-   no `Bearer` prefix support; internal endpoints `/monitoring/websites` and
-   `/monitoring/tick` are unauthenticated (any caller can push ticks); no SQL-injection
-   sanitization on website URLs (todo.txt).
-4. **Worker gaps** — probe has **no HTTP timeout** (hung sites wedge & stay unacked forever);
-   Redis stream is **never trimmed** (unbounded growth); dropped producer fields
-   (`user_id`, `timestamp`); no `XAUTOCLAIM`/dead-letter queue for stuck/failing sites; no
-   per-website monitor intervals (global 60 s only); consumer error loop has no backoff
-   (todo.txt).
-5. **No observability** — `pino`/`pino-pretty` installed but unused; logging is `console.*`;
-   no Prometheus/Grafana probes, no Sentry, no OpenAPI/Swagger docs, no pagination on
-   `/websites` / `/status/:websiteId` (todo.txt).
-6. **Missing testing/UI** — no unit/integration/E2E gates in CI; no loading states, error
-   boundaries, mobile responsiveness, or global state management; per-website page is a
-   placeholder; edit/delete are stubs; dashboard has no polling/charts (todo.txt + FE review).
-7. **Not-implemented product features** — notifications (email/push/Slack/Discord), SLA /
-   uptime-% analytics & export, pro/free plans with per-site intervals (as low as 1 m),
-   team access, audit logs, Redis cluster, synthetic browser checks (todo.txt).
-8. **Infra footguns** —
-   - `fe-deployment.yaml` declares a `cloudsql-key-volume` but never mounts it (dead
-     config); the api manifest was completed to match the consumer one (pull secret,
-     cloudsql volume, `envFrom`, `JWT_SECRET`).
-   - `gcp-infra/gcp-config.env` holds live credentials — it and the service-account keys
-     (`cloudsql-key.json`, `artifact-reader-key.json`, `github-actions-key.json`) are
-     **gitignored**; never commit them. Only the sanitized `.example` is tracked.
-   - Root `generated/client/` is a stale leftover of an earlier `prisma generate` cwd.
-9. **Time-series DB not implemented** — `WebsiteTick` lives in Postgres; no Timescale/Influx
-   layer yet.
+1. **No auth hardening** — JWTs are short-lived ([`DEVELOPMENT-CHALLENGES`](./DEVELOPMENT-CHALLENGES.md) §2) and internal
+   endpoints are key-protected (§3), but there is no rate limiting on auth, no token
+   revocation, and no pagination on `/websites`.
+2. **Probe semantics are blunt** — a probe is `Up` iff `axios.get` resolves within **10 s**;
+   DNS/TLS errors and slow-but-http sites all classify `Down`. No per-site intervals (global
+   5 min cadence), no uptime-% analytics, no chart history beyond the latest tick.
+3. **Consumer ack semantics** — batches are processed with `Promise.all`; a hung Redis/API
+   write can leave a message pending until the next `XAUTOCLAIM` pass (5 min idle), which is
+   the intended at-least-once tradeoff, not a bug per se.
+4. **No observability** — logging is `console.*` (Pino deps present but unused); no metrics
+   exporter, tracing, or error reporting (Sentry). Dashboards fetch once per mount; no
+   polling/realtime.
+5. **Single point of failure, documented** — one control plane and one US consumer VM. The
+   former is on-demand, the latter spot; both self-heal (boot scripts), but neither is
+   redundant. A 4-nines product would add on-demand workers (~+$20/mo).
+6. **Cross-ocean image pulls** — worker images live in Artifact Registry `asia-south1`;
+   the US consumer pulls ~1.3 GB trans-Pacific on every fresh boot (2–4 min of downtime).
 
 ### 6.2 Roadmap themes (from `todo.txt`)
 
-- **Error handling & observability**: Pino structured logging, Prometheus/Grafana,
-  Sentry on FE+BE.
-- **Security**: secrets manager, bcrypt/argon2, rate-limit auth, input sanitization.
+- **Error handling & observability**: Pino structured logging, Prometheus/Grafana, Sentry on
+  FE+BE.
+- **Security**: rate-limit auth, input sanitization on URL input beyond current SSRF guards.
 - **API**: OpenAPI docs, pagination, per-user rate limits.
 - **Testing**: unit + integration + E2E as CI merge blockers.
 - **Frontend**: loading/error states, mobile responsiveness, state management
   (Zustand/Redux).
 - **Workers**: dead-letter queue, uptime-% metrics, per-website intervals.
-- **Database**: migration scripts (done via Prisma already), indexes on `websiteId`,
-  `userId`, `createdAt`.
-- **Scalability**: Redis cluster for redundancy, per-user rate limits, synthetic/browser
-  checks.
+- **Database**: indexes on `websiteId`, `userId`, `createdAt`; move `WebsiteTick` to a
+  time-series store.
+- **Scalability**: promote the US spot VM to a second tiny kubeadm cluster (Option B in
+  `ARCHITECTURE-DECISIONS.md` §2.2); regional Redis (Upstash) for redundancy.

@@ -18,7 +18,8 @@ flags each site as **Up** or **Down**. The interesting part is *how* it checks:
 
 Built as a **Bun + Turborepo monorepo** — Express 5 API, Next.js 15 frontend, Redis-Stream
 workers, Prisma 7 data layer — designed to run via **Docker Compose**, **kind** (local
-Kubernetes), or a **GKE cluster** on production GCP.
+Kubernetes), or the **live GCP deployment** (Cloud Run edge + Neon/Upstash + self-managed
+kubeadm worker mesh).
 
 ---
 
@@ -82,7 +83,7 @@ Full detail in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 | `packages/redisq` | Redis Streams wrapper (xAdd / consumer groups / ack) |
 | `packages/shared-types` | Shared queue types (`MessageType`, `StreamEntry`) |
 | `kind-deploy` | Local Kubernetes manifests + `deploy.sh` bootstrap |
-| `gcp-infra` | Production Kubernetes manifests (GKE, ingress, cert-manager) |
+| `gcp-infra/k8s` | Live worker mesh: kubeadm bootstrap scripts, spot MIGs, cluster secrets, manifests |
 
 The whole design rationale (why Redis Streams, why fan-out, why central Postgres) is
 documented in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
@@ -183,14 +184,16 @@ Three targets are supported — see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for
 
 1. **Docker Compose** — full stack locally (fastest iteration).
 2. **kind** — the same stack on a local Kubernetes cluster (`kind-deploy/deploy.sh`).
-3. **Cloud Run (GCP, live)** — FE + API on Cloud Run behind the Cloudflare proxy
-   (`https://statusbus.byaniket.site` / `https://api-statusbus.byaniket.site`), PostgreSQL on
-   Neon, secrets in Secret Manager. Continuous deployment is wired to `main` through Cloud
-   Build triggers `statusbus-api-deploy` / `statusbus-fe-deploy`
-   ([`cloudbuild/statusbus-api.yaml`](cloudbuild/statusbus-api.yaml),
-   [`cloudbuild/statusbus-fe.yaml`](cloudbuild/statusbus-fe.yaml)). The Redis producer/consumer
-   monitoring mesh runs locally against the public API using the
-   `docker-compose.cloudworkers.yml` override.
+3. **GCP (live)** — the public edge (FE + API) runs on **Cloud Run** behind Cloudflare
+   (`https://statusbus.byaniket.site` / `https://api-statusbus.byaniket.site`), PostgreSQL
+   on **Neon**, Redis on **Upstash**. The monitoring mesh runs on **GCP compute**: a
+   self-managed kubeadm cluster in `asia-south1-a` (on-demand control plane running the
+   producer + 2 spot workers running the India consumer) plus a standalone spot consumer
+   VM in `us-central1-a` for the US vantage. Bring-up and ops:
+   [`gcp-infra/k8s/README.md`](gcp-infra/k8s/README.md) and
+   [docs/RUNBOOK.md](docs/RUNBOOK.md). Masthead deploys auto via Cloud Build triggers
+   `statusbus-api-deploy` / `statusbus-fe-deploy`. Worker images are pushed with
+   `gcloud builds submit --config cloudbuild/statusbus-workers.yaml .`.
 
 ## Documentation
 
@@ -198,7 +201,8 @@ Three targets are supported — see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for
 |---|---|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, components, data model, decisions |
 | [docs/WORKFLOW.md](docs/WORKFLOW.md) | End-to-end flows, queue contract, API reference, failure modes |
-| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Compose + kind + GCP deployment, CI/CD, known issues |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Live production + Compose + kind deployment, CI/CD, known issues |
+| [docs/RUNBOOK.md](docs/RUNBOOK.md) | Day-2 ops: health checks, node loss/recovery, image rebuild, join-token, secrets |
 | [docs/DEVELOPMENT-CHALLENGES.md](docs/DEVELOPMENT-CHALLENGES.md) | Challenges discovered during development & deployment, their fixes, interview review notes |
 | [docs/ARCHITECTURE-DECISIONS.md](docs/ARCHITECTURE-DECISIONS.md) | Architecture decision log: spot-worker bootstrap model, second-region strategy, cross-continent k8s rationale |
 

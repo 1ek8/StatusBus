@@ -10,14 +10,19 @@ frequent intervals, measure response times, and record the results (ticks) into 
 database. Users register, add websites through a web dashboard, and see the latest
 status/response time for each site.
 
-The intended end-state is a multi-region deployment (originally rolled out on GCP, with
-kind used for local Kubernetes testing) where:
+The multi-region deployment (live) runs the **edge** (API + dashboard) on Cloud Run and the
+**monitoring mesh** on disposable VMs per region — India consumers on a self-managed
+kubeadm cluster, the US consumer on a standalone spot VM:
 
-- The **API and database are centralized**.
+- The **API and database are centralized** (Cloud Run + Neon Postgres; Redis on Upstash).
 - A **single shared Redis Stream** fans monitoring jobs out to every region.
 - **Each region runs its own consumers** (a consumer group named after the region) so that
   every region independently checks every website.
 - All check results are aggregated into **Postgres** for the dashboard and future analytics.
+
+The worker infrastructure (bootstrap scripts, chaos-proven self-healing) is documented in
+[`gcp-infra/k8s/README.md`](../gcp-infra/k8s/README.md) and its rationale in
+[`ARCHITECTURE-DECISIONS.md`](./ARCHITECTURE-DECISIONS.md).
 
 ## 2. High-Level System Diagram
 
@@ -103,7 +108,7 @@ Express 5 (TypeScript) single-file app (`apps/api/index.ts`), run on the Bun run
   Tokens are sent in the raw `Authorization` header (no `Bearer` prefix).
 - **Validation**: `zod` (`AuthInput` → `{ username, password }`).
 - **Database access**: exclusively through `packages/store` (`import { prisma } from "store/client"`).
-- **CORS**: allow list of the frontend origins (`https://statusbus.byaniket.online`,
+- **CORS**: allow list of the frontend origins (`https://statusbus.byaniket.site`,
   `http://localhost:3000`).
 - **Endpoints** (8): see `docs/WORKFLOW.md` for the full reference table.
 
@@ -113,28 +118,33 @@ Express 5 (TypeScript) single-file app (`apps/api/index.ts`), run on the Bun run
 - Marketing landing page (`/`), `/signup`, `/signin`, `/dashboard`, and a placeholder
   `/website/[websiteId]` route.
 - Talks to the API cross-origin via `NEXT_PUBLIC_BACKEND_URL` (inlined at build time,
-  default `https://api.statusbus.byaniket.online`).
+  default `https://api-statusbus.byaniket.site`).
 - Stores the JWT in `localStorage["token"]` and sends it in the `Authorization` header.
 - No state-management library, no realtime updates (dashboards fetch once per mount),
   no per-website detail view or charts yet.
 
 ### 4.3 `apps/producer` — Job scheduler
 
-- Loop: every **60 s**, `GET {API_URL}/monitoring/websites` → for each site,
-  `XADD statusbus:web * url <url> id <id>` (via `packages/redisq`).
-- Runs one cycle immediately on start, then `setInterval` every 60 s.
+- Loop: every `PRODUCER_INTERVAL_SEC` (default **300 s**), `GET {API_URL}/monitoring/websites`
+  with the `x-internal-key` header → for each site, `XADD statusbus:web * url <url> id <id>`
+  (via `packages/redisq`), then `capStream()` trims the stream to ~100 K entries.
+- Runs one cycle immediately on start, then on the interval.
 - Retries API connectivity 10× with 2 s backoff before giving up.
-- Region-agnostic; only enqueues. Note: extra fields (`user_id`, `timestamp`) passed to
-  `xAddBulk` are dropped by `redisq` — the stream carries only `{url, id}`.
+- Region-agnostic; only enqueues. Note: winnows the API list to `{url, id}` — the stream
+  carries only those two fields.
 
 ### 4.4 `apps/consumer` — Region worker
 
 - Requires `REGION_ID` (string) and `CONSUMER_ID`.
 - **Consumer group name = `REGION_ID`**; consumer name = `CONSUMER_ID`.
 - Creates the group idempotently (`XGROUP CREATE ... MKSTREAM`, swallows `BUSYGROUP`).
-- Loop: `XREADGROUP` with `COUNT 5`, `id: '>'`; idle-sleep 1 s when no jobs.
-- For each job: `axios.get(url)`; on resolve → `status: "Up"`, on reject → `status: "Down"` —
-  where `rt_ms = Date.now() - startTime`; then `POST /monitoring/tick` and `XACK` the event.
+- Loop: `XREADGROUP` with `COUNT 5`, `id: '>'`; idle-sleep `CONSUMER_POLL_SEC` (default 60 s)
+  when no jobs. Every `CONSUMER_RECLAIM_INTERVAL_SEC` (default 300 s) it runs
+  `XAUTOCLAIM` (min idle 5 min, count 10) to reclaim in-flight messages whose consumer
+  vanished (spot eviction).
+- For each job: `axios.get(url, { timeout: 10_000 })`; on resolve → `status: "Up"`, on
+  reject → `status: "Down"` — where `rt_ms = Date.now() - startTime`; then
+  `POST /monitoring/tick` (with `x-internal-key`) and `XACK` the event, always (`.finally`).
 - Up to 5 probes run concurrently per batch (`Promise.all`).
 
 ### 4.5 `packages/store` — Prisma data layer
@@ -219,10 +229,11 @@ rows (India=1, US=2) is a prerequisite for consumers.
 | API | Express 5, TypeScript, JWT, zod |
 | Frontend | Next.js 15 (App Router, Turbopack), Tailwind v4, shadcn/ui |
 | Workers | Plain Bun/Node processes (producer, consumer) |
-| Queue | Redis 7 Streams (`packages/redisq`) |
-| Database | PostgreSQL 15 via Prisma 7 (`@prisma/adapter-pg`) |
+| Queue | Redis 7 Streams on **Upstash** (`packages/redisq`) |
+| Database | PostgreSQL via **Neon** (Prisma 7, `@prisma/adapter-pg`) |
 | Tests | Bun test runner + axios integration tests |
-| Deployment | Docker / docker-compose, kind (local k8s), GKE (production target), GitHub Actions |
+| Deployment | Docker / docker-compose, kind (local); **live**: Cloud Run (api/fe) + Neon + Upstash + kubeadm worker mesh (see below) |
+| Worker infra | GCP: kubeadm cluster (`asia-south1-a`, on-demand control plane + 2 spot workers) + standalone spot consumer VM (`us-central1-a`); bootstrap via VM startup scripts, join token + CA hash in Secret Manager |
 
 ## 7. Design Decisions & Tradeoffs
 
@@ -234,8 +245,10 @@ rows (India=1, US=2) is a prerequisite for consumers.
   region that scales linearly by region count.
 - **Central API + Postgres**: all writes funnel through the API; workers never touch the DB
   directly (recently refactored from direct Prisma calls). This keeps the DB ACL simple
-  (only the API or its Cloud SQL proxy connects) and gives a natural choke point for auth.
+  (only the API connects, via a Neon connection string held in Secret Manager) and gives a
+  natural choke point for auth.
 - **Region id doubles as the consumer-group name**: keeps worker config to two env vars
   (`REGION_ID`, `CONSUMER_ID`) at the cost of coupling region identity to the queue machinery.
-- **Probe = plain HTTP GET**: `Up` iff axios resolves (HTTP 2xx), otherwise `Down`. Simple,
-  but it conflates DNS/TLS/status-code failures and lacks a timeout today (see Known Issues).
+- **Probe = plain HTTP GET**: `Up` iff axios resolves (HTTP 2xx) within 10 s, otherwise
+  `Down`. Simple, but it conflates DNS/TLS/status-code failures (see Known Issues in
+  [`docs/DEPLOYMENT.md`](DEPLOYMENT.md)).
